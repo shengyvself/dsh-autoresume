@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Syntax check (src & lib)
+        run: |
+          node --check src/service.js
+          node --check src/client.js
+          node --check scripts/build.mjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify built lib
+        run: |
+          node --check lib/service.js
+          node --check lib/client.js
+          test -f lib/service.js && test -f lib/client.js && echo "lib OK"
+
+      - name: Run self-tests
+        run: node scripts/self-test.mjs
