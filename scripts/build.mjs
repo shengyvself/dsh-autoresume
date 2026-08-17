@@ -1,5 +1,5 @@
 // 构建 dsh-autoresume：服务端 ESM 原样复制；客户端为无界面占位，
-// 用与 narrative-studio-roundtable 相同的 window.__ModuleLoader__ CJS 包装（ALTM 同构）。
+// 用dsh 客户端模块加载器 CJS 包装。
 import { rm, cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
