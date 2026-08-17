@@ -1,0 +1,15 @@
+# 示例配置：dsh-autoresume（复制到 web profile 的 cordis.patch.yml 并修改）
+- insert:
+    - id: dsh-autoresume
+      name: 'dsh-autoresume'
+      config:
+        # 必填：要自动续跑的目标会话 ID（dsh 会话列表里复制）
+        targetSessionId: '<your-session-id>'
+        # web 进程启动后允许判定的宽限窗口（毫秒），默认 120000（2 分钟）
+        bootGraceMs: 120000
+        # 首次检查延迟（等会话恢复），默认 3000
+        initialDelayMs: 3000
+        # 会话未就绪时重查间隔，默认 5000
+        pollIntervalMs: 5000
+        # 注入的续跑提示词，默认「继续（自动）」
+        promptText: '继续（自动）'
