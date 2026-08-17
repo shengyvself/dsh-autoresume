@@ -1,0 +1,14 @@
+# dsh-autoresume：web 启动后检测目标会话的持久化事件流，若被重启打断则注入一条「继续」。
+# 单入口（包名即入口名，客户端由 package.json 的 dsh.client 声明扫描）。
+- insert:
+    - id: dsh-autoresume
+      name: 'dsh-autoresume'
+      config:
+        # 必填：要自动续跑的目标会话 ID（填你自己的）
+        targetSessionId: '<your-session-id>'
+        # web 进程启动后允许判定的宽限窗口（毫秒）
+        bootGraceMs: 120000
+        initialDelayMs: 3000
+        pollIntervalMs: 5000
+        # 注入的续跑提示词
+        promptText: '继续（自动）'
