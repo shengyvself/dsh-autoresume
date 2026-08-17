@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# logs & temp
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+
+# note: lib/ is generated from src/ but IS committed (the plugin ships with it)
