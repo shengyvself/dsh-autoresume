@@ -14,11 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
+      # 项目无运行时依赖（仅 node 内置模块），无需 npm install
       - name: Syntax check (src & lib)
         run: |
           node --check src/service.js
