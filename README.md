@@ -1,6 +1,6 @@
 # dsh-autoresume — dsh 会话重启自动续跑插件
 
-会话进程重启后，若目标会话停在"被打断的中间态"（open turn / 无结果的 tool call / turn/end interrupted），
+web 进程重启后，若目标会话停在"被打断的中间态"（open turn / 无结果的 tool call / turn/end interrupted），
 自动向该会话注入一条「继续」，让 agent 接着干活——无需人工干预。
 
 ## 特性
@@ -48,19 +48,46 @@ sudo systemctl restart dsh-web
 | `pollIntervalMs` | `5000` | 会话未就绪时的重查间隔 |
 | `promptText` | `继续（自动）` | 注入的续跑提示词 |
 
+## 工作原理
+
+```
+web 重启 → 插件加载 → 宽限窗口内 inspect(目标会话)
+  ├─ interrupted → agent.followup('继续（自动）') → 自动接续
+  ├─ completed / settled → 不动作（避免重复注入）
+  └─ 会话未就绪 → 5s 后重查
+```
+
+## 架构
+
+```
+src/
+├── service.js    # 服务端：状态机判定 + 注入（构建到 lib/）
+└── client.js     # 客户端占位（构建到 lib/）
+scripts/
+├── build.mjs     # 构建：src → lib
+└── self-test.mjs # 状态机单测（9 用例）
+```
+
+## 开发
+
+```bash
+npm run build   # src → lib
+npm test        # 状态机自测
+```
+
+## 故障排查
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 插件不动作 | `targetSessionId` 未配置 | 检查 cordis.patch.yml 配置项 |
+| 注入后 agent 不接续 | 会话处于 `running` 而非 `idle` | 插件只在 idle 时注入，等其空闲 |
+| 重启后无「继续」 | 超过 `bootGraceMs` 窗口 | 增大窗口或确认在启动后 2 分钟内判定 |
+| HMR 装卸后误触发 | —— | 已防：判定仅在新进程启动宽限内进行 |
+
 ## 卸载
 
 ```bash
 dsh plugin --profile web remove dsh-autoresume
-```
-
-## 工作原理简述
-
-```
-web 重启 → 插件加载 → 宽限窗口内 inspect(目标会话)
-  ├─ interrupted → agent.followup(继续（自动）) → 自动接续
-  ├─ completed / settled → 不动作（避免重复注入）
-  └─ 会话未就绪 → 5s 后重查
 ```
 
 ## License
