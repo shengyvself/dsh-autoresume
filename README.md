@@ -1,6 +1,6 @@
 # dsh-autoresume — dsh 会话重启自动续跑插件
 
-web 进程重启后，若目标会话停在"被打断的中间态"（open turn / 无结果的 tool call / turn/end interrupted），
+会话进程重启后，若目标会话停在"被打断的中间态"（open turn / 无结果的 tool call / turn/end interrupted），
 自动向该会话注入一条「继续」，让 agent 接着干活——无需人工干预。
 
 ## 特性
