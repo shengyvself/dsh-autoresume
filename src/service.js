@@ -4,7 +4,6 @@
  * 就通过 agent.followup() 注入一条「继续」。只服务 targetSessionId 一个会话。
  */
 import { randomUUID } from 'node:crypto';
-import { installModelSelection } from '@deepseek-ai/dsh-agent';
 
 export const name = 'dsh-autoresume';
 export const inject = ['agents', 'sessions', 'sessionPersistence'];
@@ -192,7 +191,13 @@ export function apply(ctx, config = {}) {
    * 2026-08-22 实测暴露：只挂 preset 不装 selection → 「prompt variable
    * "{{model}}" has no value for this assembly (section "deployment:persona")」。
    */
-  function installSessionSelection(agentCtx) {
+  async function installSessionSelection(agentCtx) {
+    let installModelSelection;
+    try {
+      ({ installModelSelection } = await import('@deepseek-ai/dsh-agent'));
+    } catch {
+      return; // 宿主未提供 @deepseek-ai/dsh-agent（如独立测试/CI），跳过模型选择安装
+    }
     const agent = agentCtx.agent;
     let picked;
     const selection = {
@@ -238,14 +243,14 @@ export function apply(ctx, config = {}) {
         if (presetId !== undefined) {
           const resolved = await presets.resolve(presetId);
           setup = async (agentCtx) => {
-            installSessionSelection(agentCtx);
+            await installSessionSelection(agentCtx);
             await presets.mount(agentCtx, resolved.id);
           };
         } else {
-          setup = async (agentCtx) => { installSessionSelection(agentCtx); };
+          setup = async (agentCtx) => { await installSessionSelection(agentCtx); };
         }
       } else {
-        setup = async (agentCtx) => { installSessionSelection(agentCtx); };
+        setup = async (agentCtx) => { await installSessionSelection(agentCtx); };
       }
     } catch (error) {
       setup = undefined;
