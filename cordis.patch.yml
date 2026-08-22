@@ -1,5 +1,5 @@
-# dsh-autoresume：web 启动后检测目标会话的持久化事件流，若被重启打断则注入一条「继续」。
-# 单入口（包名即入口名，客户端由 package.json 的 dsh.client 声明扫描）。
+# dsh-autoresume：web 启动后检测固定开发会话的持久化事件流，若被重启打断则注入一条「继续」。
+# 单入口（包名即入口名，客户端由 package.json 的 dsh.client 声明扫描，无需额外 client cordis 入口）。
 - insert:
     - id: dsh-autoresume
       name: 'dsh-autoresume'

@@ -4,6 +4,7 @@
  * 就通过 agent.followup() 注入一条「继续」。只服务 targetSessionId 一个会话。
  */
 import { randomUUID } from 'node:crypto';
+import { installModelSelection } from '@deepseek-ai/dsh-agent';
 
 export const name = 'dsh-autoresume';
 export const inject = ['agents', 'sessions', 'sessionPersistence'];
@@ -185,8 +186,47 @@ export function apply(ctx, config = {}) {
   }
 
   /**
+   * 与宿主 composeAgent 的 installSelection 同款：把会话持久化的模型选择装进
+   * agent 上下文（system-prompt/assemble 注入 provider/model 变量，否则 prompt
+   * 里的 {{model}} 组装报错；agent/request 也按此路由模型）。
+   * 2026-08-22 实测暴露：只挂 preset 不装 selection → 「prompt variable
+   * "{{model}}" has no value for this assembly (section "deployment:persona")」。
+   */
+  function installSessionSelection(agentCtx) {
+    const agent = agentCtx.agent;
+    let picked;
+    const selection = {
+      get current() {
+        if (picked !== undefined) return picked;
+        let logged;
+        try {
+          logged = agent?.session?.requestHeader?.()?.config;
+        } catch {
+          logged = undefined;
+        }
+        if (logged !== undefined) {
+          return {
+            provider: logged.provider,
+            model: logged.model,
+            ...(logged.reasoningEffort === undefined ? {} : { reasoningEffort: logged.reasoningEffort })
+          };
+        }
+        try {
+          return ctx.get('agentDefaultModel')?.currentSelection?.() ?? undefined;
+        } catch {
+          return undefined;
+        }
+      },
+      set current(next) {
+        picked = next;
+      }
+    };
+    installModelSelection(agent.ctx, selection);
+  }
+
+  /**
    * 2026-08-22 运维修复：目标会话 agent 不在线时由插件自己 resume（挂上会话的
-   * preset 组成，与浏览器打开同构），不再依赖用户手动打开会话。
+   * preset 组成 + 模型选择，与浏览器打开同构），不再依赖用户手动打开会话。
    */
   async function resumeTargetAgent() {
     let setup;
@@ -197,8 +237,15 @@ export function apply(ctx, config = {}) {
         const presetId = sessionPresetId(inspection);
         if (presetId !== undefined) {
           const resolved = await presets.resolve(presetId);
-          setup = async (agentCtx) => { await presets.mount(agentCtx, resolved.id); };
+          setup = async (agentCtx) => {
+            installSessionSelection(agentCtx);
+            await presets.mount(agentCtx, resolved.id);
+          };
+        } else {
+          setup = async (agentCtx) => { installSessionSelection(agentCtx); };
         }
+      } else {
+        setup = async (agentCtx) => { installSessionSelection(agentCtx); };
       }
     } catch (error) {
       setup = undefined;
