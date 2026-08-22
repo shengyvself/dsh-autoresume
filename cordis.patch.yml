@@ -6,9 +6,7 @@
       config:
         # 必填：要自动续跑的目标会话 ID（填你自己的）
         targetSessionId: '<your-session-id>'
-        # web 进程启动后允许判定的宽限窗口（毫秒）
-        bootGraceMs: 120000
+        bootGraceMs: 1800000
         initialDelayMs: 3000
         pollIntervalMs: 5000
-        # 注入的续跑提示词
         promptText: '继续（自动）'

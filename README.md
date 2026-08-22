@@ -1,95 +1,36 @@
-# dsh-autoresume — dsh 会话重启自动续跑插件
+# dsh-autoresume（重启后自动继续）
 
-web 进程重启后，若目标会话停在"被打断的中间态"（open turn / 无结果的 tool call / turn/end interrupted），
-自动向该会话注入一条「继续」，让 agent 接着干活——无需人工干预。
+> 只服务一个固定开发会话：`<your-session-id>`（必填）。
+> web 进程重启后，若该会话停在被打断的中间态，就注入一条「继续」唤醒它接着干活。
 
-## 特性
+## 行为
+- 通过 `ctx.sessionPersistence.inspect()` 读取目标会话的持久化事件流（dsh-session 官方 API，底层即 `~/.dsh/sessions/<cwd>/<id>/session.jsonl.zstd` 的平衡视图）。
+- 判定**被打断**：turn/step 打开未闭合、存在没有对应 `tool/result` 的 `tool/call`、或最后一个 `turn/end` 原因为 `interrupted`。
+- 判定**已完成**：最后是 `assistant/message`，或最后一个 `turn/end` 为 `completed` 且其后没有新用户消息 → 不动作。
+- 判定后不动作：`cancelled`/`error` 等已闭合终态，以及闭合轮次后新出现的手动用户消息。
+- 注入方式：`ctx.agents.get(目标)` → `agent.followup(userMessage)`；消息 `source.kind=plugin, form=notice`，正文为「继续（自动）」。
+- **进程级一次性**：每个 web 进程只判定/注入一次；另有 `bootGraceMs`（默认 120 秒）窗口，profile HMR 装卸插件不会误触发。
+- **2026-08-22 修复（v0.1.1）**：目标会话 agent 不在线时不再干等到宽限过期。插件现在会先直接读持久化流判定状态（无需 agent 在线）；若判定为被打断，则自行 `ctx.agents.resume()` 恢复该会话（挂载会话当前 preset，与浏览器打开同构），随后注入「继续（自动）」。判定为已完成/已闭合则立即收手，不产生恢复副作用。
+- 目标会话不在线时每 `pollIntervalMs`（默认 5 秒）重查，直到判定完成或宽限到期。
 
-- 只服务**一个**配置的 `targetSessionId`，绝不扫描其他会话
-- 通过 `ctx.sessionPersistence.inspect()` 读取会话持久化事件流做状态判定
-- 判定逻辑：
-  - **interrupted**（注入「继续」）：turn/step 打开未闭合、存在无对应 `tool/result` 的 `tool/call`、最后一个 `turn/end` 原因为 `interrupted`
-  - **completed**（不动作）：最后是 `assistant/message`，或 `turn/end` 为 `completed` 且其后无新用户消息
-  - **settled**（不动作）：`cancelled` / `error` 等已闭合终态；以及闭合轮次后出现的手动用户消息
-- 注入方式：`ctx.agents.get(target)` → `agent.followup(userMessage)`（消息 `source.kind=plugin, form=notice`）
-- **进程级一次性**：每个 web 进程只判定/注入一次；`bootGraceMs` 宽限窗口内有效（profile HMR 装卸插件不误触发）
-- 目标会话未就绪时按 `pollIntervalMs` 重查
-
-## 安装
-
-```bash
-# 1. 构建
-npm run build
-
-# 2. 注册到 web profile
-dsh plugin --profile web add /path/to/dsh-autoresume
-
-# 3. 配置目标会话（编辑 web profile 的 cordis.patch.yml）
-- insert:
-    - id: dsh-autoresume
-      name: 'dsh-autoresume'
-      config:
-        targetSessionId: '<your-session-id>'   # 必填
-
-# 4. 验证注册
-dsh --profile web --dump-config   # 应出现 id: dsh-autoresume
-
-# 5. 重启生效
-sudo systemctl restart dsh-web
-```
-
-## 配置项
-
+## 配置（cordis.patch.yml）
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `targetSessionId` | （必填） | 要自动续跑的目标会话 ID；未配置则插件不动作 |
-| `bootGraceMs` | `120000` | web 进程启动后允许判定的宽限窗口（毫秒） |
+| `targetSessionId` | 上面写死的开发会话 | 只允许改这一个目标，绝不扫描其他会话 |
+| `bootGraceMs` | `120000` | web 进程启动后允许判定的宽限窗口 |
 | `initialDelayMs` | `3000` | 首次检查延迟（等会话恢复） |
 | `pollIntervalMs` | `5000` | 会话未就绪时的重查间隔 |
-| `promptText` | `继续（自动）` | 注入的续跑提示词 |
+| `promptText` | `继续（自动）` | 注入正文 |
 
-## 工作原理
-
-```
-web 重启 → 插件加载 → 宽限窗口内 inspect(目标会话)
-  ├─ interrupted → agent.followup('继续（自动）') → 自动接续
-  ├─ completed / settled → 不动作（避免重复注入）
-  └─ 会话未就绪 → 5s 后重查
-```
-
-## 架构
-
-```
-src/
-├── service.js    # 服务端：状态机判定 + 注入（构建到 lib/）
-└── client.js     # 客户端占位（构建到 lib/）
-scripts/
-├── build.mjs     # 构建：src → lib
-└── self-test.mjs # 状态机单测（9 用例）
-```
-
-## 开发
-
+## 安装与验证
 ```bash
-npm run build   # src → lib
-npm test        # 状态机自测
+npm run build
+dsh plugin --profile web add /home/ubuntu/world-Shengyv/narrative-studio/plugins/dsh-autoresume
+dsh --profile web --dump-config   # 应出现 id: dsh-autoresume、name: dsh-autoresume
 ```
+装完**不要立即重启**；等开发完成后再 `sudo systemctl restart dsh-web` 生效。
+实测（2026-08-17）：重启后目标会话日志出现 `user/message`（`source.plugin=dsh-autoresume`，正文「继续」），开发会话自动接续；每进程只注入一次。
 
-## 故障排查
-
-| 现象 | 原因 | 处理 |
-|---|---|---|
-| 插件不动作 | `targetSessionId` 未配置 | 检查 cordis.patch.yml 配置项 |
-| 注入后 agent 不接续 | 会话处于 `running` 而非 `idle` | 插件只在 idle 时注入，等其空闲 |
-| 重启后无「继续」 | 超过 `bootGraceMs` 窗口 | 增大窗口或确认在启动后 2 分钟内判定 |
-| HMR 装卸后误触发 | —— | 已防：判定仅在新进程启动宽限内进行 |
-
-## 卸载
-
-```bash
-dsh plugin --profile web remove dsh-autoresume
-```
-
-## License
-
-Apache-2.0
+## 卸载/禁用
+- 卸载：`dsh plugin --profile web remove dsh-autoresume`
+- 热禁用：在 web profile `cordis.patch.yml` 给 `dsh-autoresume` 入口加 `disabled: true`。

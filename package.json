@@ -1,6 +1,6 @@
 {
   "name": "dsh-autoresume",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "dsh web 重启后自动向固定开发会话注入「继续」：只服务目标会话，完成态不动作，避免重复注入。",
   "type": "module",
   "main": "./lib/service.js",

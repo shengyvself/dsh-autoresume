@@ -149,7 +149,7 @@ export function apply(ctx, config = {}) {
     ctx.logger.warn('dsh-autoresume: no targetSessionId configured — plugin disarmed; set config.targetSessionId');
     return;
   }
-  const bootGraceMs = positiveInt(config.bootGraceMs, 120000);
+  const bootGraceMs = positiveInt(config.bootGraceMs, 1800000);
   const initialDelayMs = positiveInt(config.initialDelayMs, 3000);
   const pollIntervalMs = positiveInt(config.pollIntervalMs, 5000);
   const promptText = typeof config.promptText === 'string' && config.promptText !== ''
@@ -170,6 +170,81 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /** 与宿主 resolveSessionPreset 同语义：最后一个 agent-preset/selected 优先，否则取 header。 */
+  function sessionPresetId(inspection) {
+    const events = inspection?.events;
+    if (Array.isArray(events)) {
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (event?.type === 'agent-preset/selected' && typeof event.data?.agentPreset === 'string') {
+          return event.data.agentPreset;
+        }
+      }
+    }
+    return typeof inspection?.meta?.agentPreset === 'string' ? inspection.meta.agentPreset : undefined;
+  }
+
+  /**
+   * 2026-08-22 运维修复：目标会话 agent 不在线时由插件自己 resume（挂上会话的
+   * preset 组成，与浏览器打开同构），不再依赖用户手动打开会话。
+   */
+  async function resumeTargetAgent() {
+    let setup;
+    try {
+      const presets = ctx.get('agentPresets');
+      if (presets !== undefined) {
+        const inspection = await ctx.sessionPersistence.inspect(targetSessionId);
+        const presetId = sessionPresetId(inspection);
+        if (presetId !== undefined) {
+          const resolved = await presets.resolve(presetId);
+          setup = async (agentCtx) => { await presets.mount(agentCtx, resolved.id); };
+        }
+      }
+    } catch (error) {
+      setup = undefined;
+      ctx.logger.warn(`dsh-autoresume: preset compose for ${targetSessionId} failed, plain resume fallback: ${String(error?.message ?? error)}`);
+    }
+    await ctx.agents.resume({
+      resumeSessionId: targetSessionId,
+      ...(setup === undefined ? {} : { setup })
+    });
+  }
+
+  /**
+   * 早期路径（agent 不在线时）：读持久化流判定 → 被打断才自己 resume。
+   * 用共享 promise 串行化，避免并发 checkOnce 在判定落地前抢先 resume
+   * （2026-08-22 修复：曾出现 completed 判定后仍 self-resumed 的竞态）。
+   */
+  let earlyPathPromise = null;
+
+  function runEarlyPath() {
+    earlyPathPromise ??= (async () => {
+      let analysis;
+      try {
+        const inspection = await ctx.sessionPersistence.inspect(targetSessionId);
+        analysis = analyzeSessionEvents(inspection.events, promptText);
+        ctx.logger.info(`dsh-autoresume: early inspect ${targetSessionId} state=${analysis.state} reason=${analysis.reason}`);
+        console.error(`[dsh-autoresume] early inspect state=${analysis.state} reason=${analysis.reason}`);
+      } catch (error) {
+        ctx.logger.warn(`dsh-autoresume: early inspect(${targetSessionId}) failed: ${String(error?.message ?? error)}`);
+        throw error;
+      }
+      if (analysis.state !== 'interrupted') {
+        finishDecision();
+        return;
+      }
+      try {
+        await resumeTargetAgent();
+        ctx.logger.info(`dsh-autoresume: self-resumed ${targetSessionId}`);
+        console.error(`[dsh-autoresume] self-resumed ${targetSessionId}`);
+      } catch (error) {
+        ctx.logger.warn(`dsh-autoresume: resume(${targetSessionId}) failed: ${String(error?.message ?? error)}`);
+        throw error;
+      }
+    })();
+    return earlyPathPromise.catch(() => { earlyPathPromise = null; });
+  }
+
   async function checkOnce(source) {
     if (settled || injected) return;
     polls += 1;
@@ -181,7 +256,12 @@ export function apply(ctx, config = {}) {
       return;
     }
     const agent = ctx.agents.get(targetSessionId);
-    if (agent === undefined) return; // 目标会话尚未恢复为 live，下一轮再查
+    if (agent === undefined) {
+      // 目标会话 agent 尚未 live：不再干等——先读持久化流判定状态（无需 agent 在线），
+      // 若被打断则自己 resume 目标会话，下一轮 poll 走下方注入路径。
+      await runEarlyPath();
+      return;
+    }
     if (agent.status !== 'idle') return; // 正在运行，绝不打断
     console.error(`[dsh-autoresume] check ${source}: target agent live and idle`);
     let inspection;
