@@ -1,6 +1,6 @@
 {
   "name": "dsh-autoresume",
-  "version": "0.1.2",
+  "version": "0.0.9",
   "description": "dsh web 重启后自动向固定开发会话注入「继续」：只服务目标会话，完成态不动作，避免重复注入。",
   "type": "module",
   "main": "./lib/service.js",
@@ -16,29 +16,8 @@
   "files": [
     "lib",
     "cordis.patch.yml",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "deepseek-harness",
-    "automation",
-    "session",
-    "resume",
-    "auto-continue"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/shengyvself/dsh-autoresume.git"
-  },
-  "homepage": "https://github.com/shengyvself/dsh-autoresume#readme",
-  "bugs": {
-    "url": "https://github.com/shengyvself/dsh-autoresume/issues"
-  },
-  "engines": {
-    "node": ">=20"
-  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -51,8 +30,7 @@
     }
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "test": "node scripts/self-test.mjs"
+    "build": "node scripts/build.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.1",
@@ -61,5 +39,8 @@
     "@deepseek-ai/dsh-session": ">=0.1.0-rc.5",
     "@deepseek-ai/dsh-session-persistence": ">=0.1.0-rc.5"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@deepseek-ai/dsh-agent": "0.1.1-rc.2"
+  }
 }

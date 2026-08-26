@@ -4,9 +4,9 @@
     - id: dsh-autoresume
       name: 'dsh-autoresume'
       config:
-        # 必填：要自动续跑的目标会话 ID（填你自己的）
-        targetSessionId: '<your-session-id>'
+        targetSessionId: 'session-00000000-0000-0000-0000-000000000000'
         bootGraceMs: 1800000
         initialDelayMs: 3000
         pollIntervalMs: 5000
+        liveWatch: true
         promptText: '继续（自动）'
