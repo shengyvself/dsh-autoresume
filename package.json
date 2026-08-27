@@ -1,7 +1,7 @@
 {
   "name": "dsh-autoresume",
-  "version": "0.0.9",
-  "description": "web 重启或网络瞬时故障中断的 dsh 会话自动继续：全域扫描近 24h 会话、按原模型预设恢复、liveWatch 补捞运行期失败、死循环守卫；completed/settled 一律不打扰。",
+  "version": "0.0.10",
+  "description": "web 重启或网络瞬时故障中断的 dsh 会话自动继续：全域扫描近 24h 会话、按原模型预设恢复、liveWatch 补捞运行期失败、死循环守卫、bootGraceMs 默认永久守护；completed/settled 一律不打扰。",
   "type": "module",
   "main": "./lib/service.js",
   "exports": {

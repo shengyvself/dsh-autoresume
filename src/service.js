@@ -49,24 +49,39 @@ function isOurContinueMessage(event, continueText = DEFAULT_PROMPT_TEXT) {
  * DSH dsh-llm 官方可重试错误码（= 瞬时/网络类故障，重试可恢复），见
  * @deepseek-ai/dsh-llm retry-policy DEFAULT_RETRYABLE_CODES。
  */
-const RETRYABLE_LLM_CODES = new Set(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT']);
+const RETRYABLE_LLM_CODES = new Set(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'rate_limit_exceeded', 'too_many_requests']);
+
+/** DSH API 直出瞬时/上游错误 type（实证 service_unavailable；server_error 为 5xx 标准语义）。 */
+const RETRYABLE_LLM_TYPES = new Set(['service_unavailable', 'server_error']);
 
 /** 兜底消息特征：官方码集合外但消息明确为瞬时网络/上游故障（如 PI_AI_ERROR: Upstream error…）。 */
-const NETWORK_FAILURE_PATTERN = /(upstream error|internal server error|429|5dd|timed?s?out|fetch failed|econnreset|econnrefused|etimedout|socket hang up|network error|connections+(?:refused|reset|closed))/i;
+const NETWORK_FAILURE_PATTERN = /(upstream error|internal server error|service temporarily unavailable|currently overloaded|please try again later|all endpoints are currently overloaded|\b429\b|\b5\d\d\b|timed\s?out|fetch failed|econnreset|econnrefused|etimedout|socket hang up|network error|connection\s+(?:refused|reset|closed))/i;
 
-/** 判定 turn/end 的错误对象（{code?, message?}）是否属于网络/瞬时故障。 */
+/** 解开 DSH/OpenAI 风格错误信封：{ error: { code?, type?, message? } } → 内层对象。 */
+function unwrapError(error) {
+  if (error && typeof error === 'object' && error.error && typeof error.error === 'object') {
+    return error.error;
+  }
+  return error;
+}
+
+/** 判定 turn/end 的错误对象（{code?, type?, message?}）是否属于网络/瞬时故障。 */
 function isNetworkFailure(error) {
-  if (!error || typeof error !== 'object') return false;
-  const code = typeof error.code === 'string' ? error.code : '';
+  const inner = unwrapError(error);
+  if (!inner || typeof inner !== 'object') return false;
+  const code = typeof inner.code === 'string' ? inner.code : '';
   if (RETRYABLE_LLM_CODES.has(code)) return true;
-  const message = typeof error.message === 'string' ? error.message : '';
+  const type = typeof inner.type === 'string' ? inner.type : '';
+  if (RETRYABLE_LLM_TYPES.has(type)) return true;
+  const message = typeof inner.message === 'string' ? inner.message : '';
   return NETWORK_FAILURE_PATTERN.test(message);
 }
 
 function describeFailure(error) {
-  if (!error || typeof error !== 'object') return 'unknown';
-  const code = typeof error.code === 'string' ? error.code : '';
-  const message = typeof error.message === 'string' ? error.message : '';
+  const inner = unwrapError(error);
+  if (!inner || typeof inner !== 'object') return 'unknown';
+  const code = typeof inner.code === 'string' ? inner.code : '';
+  const message = typeof inner.message === 'string' ? inner.message : '';
   return [code, message].filter(Boolean).join(': ').slice(0, 160) || 'unknown';
 }
 
@@ -229,7 +244,12 @@ export function apply(ctx, config = {}) {
     : null;
   const scanMode = targetSessionId === null && config.scanMode !== false;
   const scanWindowMs = positiveInt(config.scanWindowMs, 86400000);
-  const bootGraceMs = positiveInt(config.bootGraceMs, 1800000);
+  // 2026-08-27：bootGraceMs 默认值由 30min 改为 Infinity（永久不 disarmed）。
+  // 原因：限流中断后长时间静止的会话（如被放弃的 429 受害者）可能救不回来后 mtime 静止 14h+；
+  // 旧默认 30min 让 dsh-web 进程超窗后永远 disarmed，错过所有这类会话。
+  // 永久不睡的代价由 liveWatch 的 lastSeenMtime 缓存吸收（mtime 不变就跳过，0 开销）。
+  // 用户可显式配置 bootGraceMs 数值回归 30min 行为。
+  const bootGraceMs = positiveInt(config.bootGraceMs, Number.POSITIVE_INFINITY);
   const initialDelayMs = positiveInt(config.initialDelayMs, 3000);
   const pollIntervalMs = positiveInt(config.pollIntervalMs, 5000);
   const promptText = typeof config.promptText === 'string' && config.promptText !== ''
@@ -402,6 +422,9 @@ export function apply(ctx, config = {}) {
   async function checkOnce(source) {
     if (settled) return;
     polls += 1;
+    // 2026-08-27：bootGraceMs 默认 Infinity（永不触发）——守护程序永久不睡。
+    // 旧默认 30min 导致进程超窗后永远 disarmed、错过 14h+ 前的 429 受害者会话。
+    // 用户可显式配 bootGraceMs 数值回归旧行为。
     if (Date.now() - bootStartedAtMs > bootGraceMs) {
       finishDecision();
       ctx.logger.info(`dsh-autoresume: boot grace expired (${source}) — disarmed for this process`);
