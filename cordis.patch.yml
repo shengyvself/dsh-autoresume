@@ -5,7 +5,6 @@
       name: 'dsh-autoresume'
       config:
         targetSessionId: 'session-00000000-0000-0000-0000-000000000000'
-        bootGraceMs: 1800000
         initialDelayMs: 3000
         pollIntervalMs: 5000
         liveWatch: true
