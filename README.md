@@ -5,6 +5,14 @@
 > 兼容模式：配置 `targetSessionId` 时退化为旧行为（只服务该会话）。
 > **运行期间再次网络失败（v0.0.9，2026-08-24）**：`liveWatch`（默认 true）使插件在 boot 扫描后保持轮询，补 catch 同一会话在运行期间**再次**以网络/瞬时失败停止（此前只有在 web 重启后才一次性生效）；并加**死循环守卫**——若上次注入「继续」之后未产生任何内容/工具调用便再次以同类网络错误失败（模型持续返回空内容，例如某些强制推理的隐身模型），判定为持续故障转 `settled` 不再注入，交由用户手动处理；会话之后有产出或新用户消息则重新武装。
 > **永久守护（v0.0.10，2026-08-27）**：`bootGraceMs` 默认由 30 分钟改为 `Infinity`——宽限窗口永不触发 disarm，运行期任意时刻的再次网络/瞬时失败都由 `liveWatch` 持续补捞（`lastSeenMtime` 缓存：会话 mtime 未变即跳过，0 开销）；限流/瞬时失败后长时间静止的会话不再因超窗被错过。可显式配置 `bootGraceMs` 数值回归旧行为。
+> **触发场景清单（v0.0.10.1，2026-08-28）**：本插件对以下三类事件自动注入「继续（自动）」：
+> 1. **大模型拥挤 / 排队**——上游限流 429（错误码 `RATE_LIMIT` / `rate_limit_exceeded` / `too_many_requests`），或返回 `type=service_unavailable`，或消息命中 `currently overloaded` / `please try again later` / `all endpoints are currently overloaded` / `\b5\d\d\b` 等特征。属于"等一会儿就能恢复"的瞬时故障，自动接着跑。
+> 2. **上游网络 / 服务端故障**——错误码 `SERVER` / `TIMEOUT` / `TRANSPORT` / `EMPTY_RESPONSE`，或消息命中网络特征正则 `NETWORK_FAILURE_PATTERN`（`upstream error` / `internal server error` / `service temporarily unavailable` / `timed out` / `fetch failed` / `econnreset` / `econnrefused` / `etimedout` / `socket hang up` / `network error` / `connection refused|reset|closed`）。
+> 3. **DSH web 重启 / 崩溃造成 turn 停在中间态**——`turn/start` 后无 `turn/end`、`step/start` 后无 `step/end`、有 `tool/call` 但无对应 `tool/result`、或最后一个 `turn/end` 原因 = `interrupted`。
+>
+> **不动的场景**（避免误注入 / 死循环）：已完成（`assistant/message` / `turn/end reason=completed`）、`cancelled`、非网络类 error（配置/模型错误如 `UNKNOWN_MODEL` / `MISSING_CREDENTIAL` / `NO_ADAPTER` / `INVALID_MODEL_INFO`）、闭合轮次后的新用户消息。
+>
+> **死循环守卫**：上一次注入「继续」之后若模型**没有产生任何内容或工具调用**又以同类网络错误失败（典型如某些隐身模型过载时持续返回空内容），自动转 `settled` 不再注入，交还用户。会话有产出或新用户消息时自动重新武装。
 
 ## 行为
 - 通过 `ctx.sessionPersistence.inspect()` 读取目标会话的持久化事件流（dsh-session 官方 API，底层即 `~/.dsh/sessions/<cwd>/<id>/session.jsonl.zstd` 的平衡视图）。
