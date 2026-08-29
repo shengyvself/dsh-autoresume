@@ -1,3 +1,6 @@
-node_modules/
+# 本地备份/回滚文件，绝不进 GitHub（含脱敏前内容）
 *.bak-*
-*.log
+*.broken-*
+
+# 依赖
+node_modules/
