@@ -2,6 +2,7 @@
 
 > **全域模式（v0.0.5，2026-08-23）**：web 重启后，**任何被重启中断任务的会话**都会自动继续——扫描 `~/.dsh/sessions` 全部会话（仅处理最后活动在 `scanWindowMs`（默认 24h）内的），持久化事件流停在被打断中间态的注入「继续」；completed/settled 一律不动；正在运行的会话绝不打断。
 > **网络故障停止（v0.0.8，2026-08-24）**：会话因**网络/瞬时故障**停止（最后一个 `turn/end` 为 `error`，错误码属 DSH 可重试集合 `EMPTY_RESPONSE/RATE_LIMIT/SERVER/TIMEOUT/TRANSPORT` 及 429 直出码 `rate_limit_exceeded`/`too_many_requests`，或消息命中网络特征如 `upstream error`/`429`/`5xx`/`timeout`/`fetch failed`/`ECONNRESET`/`service temporarily unavailable`；支持 DSH/OpenAI 风格错误信封 `{error:{code,type,message}}`（含 `type=service_unavailable`））同样注入「继续（自动）」让其自动重跑；**配置/模型类错误**（`UNKNOWN_MODEL`/`MISSING_CREDENTIAL`/`NO_ADAPTER` 等）维持 settled 不注入，避免死循环。
+> **504/网关超时强化（v0.0.12，2026-08-31）**：错误信封解包改为**递归**（任意深度 `{error:{...}}` 嵌套、`failure` 负载字段均剥到最内层），`NETWORK_FAILURE_PATTERN` 补 `gateway time-?out` 特征——外部环境 504 Gateway Time-out（ALB 网关超时 HTML）无论以单层/多层信封、带/不带状态码数字呈现均正确判 network-stopped 注入。
 > 兼容模式：配置 `targetSessionId` 时退化为旧行为（只服务该会话）。
 > **运行期间再次网络失败（v0.0.9，2026-08-24）**：`liveWatch`（默认 true）使插件在 boot 扫描后保持轮询，补 catch 同一会话在运行期间**再次**以网络/瞬时失败停止（此前只有在 web 重启后才一次性生效）；并加**死循环守卫**——若上次注入「继续」之后未产生任何内容/工具调用便再次以同类网络错误失败（模型持续返回空内容，例如某些强制推理的隐身模型），判定为持续故障转 `settled` 不再注入，交由用户手动处理；会话之后有产出或新用户消息则重新武装。
 

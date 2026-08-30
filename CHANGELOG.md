@@ -2,6 +2,11 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
+## 0.0.12 — 2026-08-31
+
+- **504 Gateway Time-out（ALB 网关超时）识别强化**：`unwrapError` 由单层信封改为**递归剥到最内层**（支持任意深度 `{error:{...}}` 嵌套，并优先取 `failure` 负载字段）——外部用户环境的多层错误信封（如 `{error:{error:{code,message}}}`）此前会判 settled 不注入，现已正确判 network-stopped 注入「继续（自动）」；`NETWORK_FAILURE_PATTERN` 补 `gateway time-?out` 特征（覆盖 504 HTML 被截断丢失状态码数字、只剩 "Gateway Time-out" 标题的场景）。
+- 验证：场景矩阵 **18/18 PASS**（504+SERVER/裸 HTML/一层/两层/三层信封、reason.failure、数字 code、转义 HTML、仅 gateway 标题、UNKNOWN_MODEL/CONTEXT_WINDOW_EXCEEDED 回归均正确）。
+
 ## 0.0.11 — 2026-08-29
 
 - **支持 402（Insufficient balance / QUOTA）自动继续**：账户余额类错误（code `QUOTA`/`insufficient_balance`/`payment_required`，或消息含 `402`/`insufficient balance`/`payment required`/`quota exceeded`/`quota exhausted`）现在也会触发「继续（自动）」注入——充值或切换 provider 后会话可自动恢复；loop-guard 死循环守卫保持（注入后无产出再失败 → settled 不注入）。
