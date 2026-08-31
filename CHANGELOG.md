@@ -2,6 +2,11 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
+## 0.0.13 — 2026-08-31
+
+- **OpenRouter 上游 provider 故障识别**：`NETWORK_FAILURE_PATTERN` 补 `provider returned error` 特征——OpenRouter 对上游 provider（如 minimax）故障的标准文案（pi-ai adapter 兜底归类 `PI_AI_ERROR`，属瞬时上游故障、同 provider 稍后可恢复）同样判 network-stopped 注入「继续（自动）」。实证：真实会话 78s 无产出以 `PI_AI_ERROR: Provider returned error` 收尾（旧版判 settled 不注入），同 provider 稍后手动「继续」即成功——确属瞬时上游故障，应注入。
+- 验证：场景矩阵 **14/14 PASS**（真实失败会话 → network-stopped 注入 + self-resumed；loop-guard/UNKNOWN_MODEL/completed/TRANSPORT/504 嵌套信封/open turn 回归全绿）。
+
 ## 0.0.12 — 2026-08-31
 
 - **504 Gateway Time-out（ALB 网关超时）识别强化**：`unwrapError` 由单层信封改为**递归剥到最内层**（支持任意深度 `{error:{...}}` 嵌套，并优先取 `failure` 负载字段）——外部用户环境的多层错误信封（如 `{error:{error:{code,message}}}`）此前会判 settled 不注入，现已正确判 network-stopped 注入「继续（自动）」；`NETWORK_FAILURE_PATTERN` 补 `gateway time-?out` 特征（覆盖 504 HTML 被截断丢失状态码数字、只剩 "Gateway Time-out" 标题的场景）。
