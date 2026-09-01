@@ -2,6 +2,19 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
+## 0.0.16 — 2026-09-01
+
+- **启动崩溃循环修复（ctx.agents inactive-context 防御）**：DSH 0.1.2-alpha.3 升级后，插件在插件树加载阶段因 `ctx.agents.get()` 在**插件上下文未活性/服务注入未就绪**时访问触发 cordis `inactive context` 守卫拦截而抛 `fatal load failure: Error: cannot get required service "agents" in inactive context`（journal 实证崩溃循环 restart 达 13 次，`checkOnce` 处 `setTimeout` 3s 首轮触发时上下文可能未活性）。**修复**：新增防御助手 `getAgent(sessionId)`（`try/catch` 捕获 inactive-context 异常 → `ctx.logger.warn` → 返回 `undefined`，参考 prompt-polish `ctx 服务访问 try/catch 降级` 范式）；`checkOnce()` 与 `injectIfIdle()` 两处 `ctx.agents.get()` 改用该助手——未就绪时 warn 降级、本轮跳过该会话，下轮 5s poll 重试，不中断插件树加载。核对其余访问点已受保护（`ctx.sessionPersistence.inspect` 已各自 try/catch、`resumeSession` 内 inspect/resume 有外层 try/catch），无需再补。
+- 验证：① node --check（src/lib）+ build src→lib 一致（md5 `3c1733df...`）+ import 冒烟 5 exports + inject 声明在位；② 分类回归 3/3（completed / network-stopped(RATE_LIMIT) / interrupted 行为不变）；③ dsh-web 由 DSH 重启通过——journal 无 `cannot get required service "agents"` / `inactive context` / `status=1`，`[dsh-autoresume]` 正常日志出现，重启后跨 60s 稳定 3080=401/200。**未自行重启（遵循重启纪律，由 DSH server-ops 执行并验证）**。
+
+## 0.0.15 — 2026-09-01
+
+- **402/余额类无限循环修复**（用户直报：真没余额后自动继续无限循环——`PI_AI_ERROR`/`上下文注入`/`dsh-autoresume`/`继续（自动）`/`本轮运行失败 402 status code (no body)` 反复出现）。双根因：
+  - ① `assistant/chunk` 的 `usage`/`finish` 是 LLM 调用计费/结束**元数据**（请求被拒也会写），此前一律计入「注入后进展」→ `continuedThenFell` 的 `!assistantAfterOurs` 永不满足 → loop-guard 失效 → 每次注入后 402 都判 `network-stopped` 再注入。**修复**：仅真实产出块（`text-delta`/`reasoning-delta`/`tool-call-delta`/`block-start`/`block-end`）计入 `assistantAfterOurs`。
+  - ② 余额类错误（`402 status code (no body)`/`QUOTA`/`Insufficient balance`/`insufficient_balance`/`payment_required`）是**持久性**故障——充值或换 provider 前每次 LLM 调用必失败，与瞬时网络故障（429/5xx）性质不同。**修复**：新增 `BALANCE_LLM_CODES`/`BALANCE_FAILURE_PATTERN`/`isBalanceFailure()`；注入「继续」后再次以余额类错误失败 → 无论有无产出**一律转 `settled`** 不再注入（首次 402 仍注入一次，覆盖「充值后恢复」场景；充值/换 provider 后用户手动继续即可）。
+- **400 与中文瞬时特征（同轮追加）**：① `NETWORK_FAILURE_PATTERN` 补 `\b400\b`（tokenrhythm/pi-ai 适配器兜底形态 `400 status code (no body)`，用户裁定与 402 同为可继续错误）与中文瞬时特征（`模型服务暂时不可用`/`服务暂时不可用`/`请稍后重试`/`稍后再试`/`当前繁忙`/`服务器繁忙`——用户实报 tokenrhythm 返回 `模型服务暂时不可用，请稍后重试` 0 tok 即时失败，语义等同 `service temporarily unavailable`，此前落入 settled 不注入）；② 新增 `PERMANENT_LLM_CODES` 先于特征匹配排除永久码（`UNKNOWN_MODEL`/`MISSING_CREDENTIAL`/`NO_ADAPTER`/`INVALID_MODEL_INFO`/`CONTEXT_WINDOW_EXCEEDED`/`MODEL_NOT_FOUND`）——保 CHANGELOG 0.0.12 回归基线：`CONTEXT_WINDOW_EXCEEDED`（上下文超限，重试必失败）即使携带 `400 status code (no body)` 也判 settled 不注入。循环由 loop-guard 兜底。
+- 验证：① node --check + build(src→lib 一致) + import 冒烟 5 exports；② 真实 401860fc 事件流复跑——逐 turn/end 判定：首次 402→`network-stopped`（注入一次），注入后再 402→`settled`(persistent balance failure loop guard) **循环切断**；③ 回归矩阵 19/19 PASS（瞬时 429/5xx/upstream 有产出仍可再注入不误伤、首次 402 仍注入、completed/aborted/interrupted/UNKNOWN_MODEL/empty 不受影响）；④ 重启（PID 2189009→2207586，Result=success NRestarts=0）3 连测 200×3；⑤ 实机 401860fc 注入后**成功恢复**（turn 13 正常产出，无再 402），系统无 `persistent balance failure` 残留。400/中文瞬时矩阵 16/16 PASS（真实 10e7bd97 复跑：`400 status code (no body)`/`模型服务暂时不可用，请稍后重试` → network-stopped，CONTEXT_WINDOW_EXCEEDED 回归 settled）；二次重启（PID 2207586→2216423→2217741，Result=success NRestarts=0）3 连测 200×3，boot 扫描正常注入无异常。
+
 ## 0.0.14 — 2026-09-01
 
 - **双注入守卫（重启/进程死亡循环守卫）**：网络分支 `continuedThenFell` 的同构守卫推广到 `interrupted` 分支——若「上次注入 → 模型零产出（assistant/chunk 与 assistant/message 都未出现，无工具调用）→ 再次被打断」，判定为**环境噪音**（dsh-web 崩溃循环 / 进程被 systemd 重启杀死 turn）而非真实业务中断，转 `settled` 不再注入，把决定权交还用户。守卫基于**持久化会话事件流**（不依赖进程内存态），跨进程/跨重启一致生效。

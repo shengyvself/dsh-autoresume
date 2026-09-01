@@ -6,6 +6,10 @@
  * 含账户余额类 QUOTA/402/Insufficient balance——充值或换 provider 后可恢复）
  * 才注入「继续」；completed/settled 一律不动。保留单目标兼容：
  * 配置 targetSessionId 时只服务该会话（旧行为）。
+ * 402/余额类无限循环守卫（2026-09-01）：余额不足是**持久性**状态（充值/换
+ * provider 前每次 LLM 调用必失败），注入一次后若再次以余额类错误失败 → 转
+ * settled 不再注入（首次 402 仍注入一次以覆盖「充值后恢复」场景；防真没余额
+ * 时无限自动继续）。
  */
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -55,11 +59,61 @@ const RETRYABLE_LLM_CODES = new Set(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', '
 /** DSH API 直出瞬时/上游错误 type（实证 service_unavailable；server_error 为 5xx 标准语义）。 */
 const RETRYABLE_LLM_TYPES = new Set(['service_unavailable', 'server_error']);
 
+/**
+ * 余额类（持久性）错误：账户余额不足/配额耗尽——充值或换 provider 前每次 LLM
+ * 调用都必然失败，与瞬时网络故障（429/5xx）性质不同。2026-09-01 新增：
+ * 注入「继续」后再次以余额类错误失败 → 判 settled 防无限循环。
+ * 错误形态实证：{"message":"402 status code (no body)","code":"PI_AI_ERROR"}
+ * 与 {"code":"QUOTA","message":"402 {\"error\":\"Insufficient balance\"}"}。
+ */
+const BALANCE_LLM_CODES = new Set(['QUOTA', 'insufficient_balance', 'payment_required', 'payment_required_to_access', 'insufficient_quota']);
+
+/** 余额类消息特征（与 NETWORK_FAILURE_PATTERN 中余额子集一致，单独抽出便于归类）。 */
+const BALANCE_FAILURE_PATTERN = /(\b402\b|insufficient balance|payment required|quota exceeded|quota exhausted|no balance|insufficient funds)/i;
+
+/** 判定 turn/end 错误是否属于余额类（持久性，非瞬时）。 */
+function isBalanceFailure(error) {
+  const inner = unwrapError(error);
+  if (!inner || typeof inner !== 'object') return false;
+  const code = typeof inner.code === 'string' ? inner.code : '';
+  if (BALANCE_LLM_CODES.has(code)) return true;
+  const message = typeof inner.message === 'string' ? inner.message : '';
+  return BALANCE_FAILURE_PATTERN.test(message);
+}
+
+/**
+ * assistant/chunk 的真实产出块类型。2026-09-01：usage/finish 是 LLM 调用的
+ * 计费/结束元数据，不是模型产出——402 等请求被拒时也会先写 usage/finish 收尾，
+ * 若计入「注入后进展」会让 loop-guard 的 !assistantAfterOurs 条件永不满足，
+ * 造成「真没余额时自动继续无限循环」（实证：401860fc 注入→402→再注入×9）。
+ */
+const PROGRESS_CHUNK_TYPES = new Set(['text-delta', 'reasoning-delta', 'tool-call-delta', 'block-start', 'block-end']);
+
+function isProgressChunk(event) {
+  const chunk = event?.data?.chunk;
+  return chunk !== null && typeof chunk === 'object' && PROGRESS_CHUNK_TYPES.has(chunk.type);
+}
+
+/** 永久/配置类错误码：即使 message 命中网络特征（如 "400 status code (no body)"）也不判可重试。
+ * 2026-09-01：400 加入网络特征后，CONTEXT_WINDOW_EXCEEDED（上下文超限，重试必失败，
+ * 需用户手动压缩/换模型，CHANGELOG 0.0.12 回归基线 settled）与 UNKNOWN_MODEL 等
+ * 可能携带同样 message——先于特征匹配排除，保回归。 */
+const PERMANENT_LLM_CODES = new Set(['UNKNOWN_MODEL', 'MISSING_CREDENTIAL', 'NO_ADAPTER', 'INVALID_MODEL_INFO', 'CONTEXT_WINDOW_EXCEEDED', 'MODEL_NOT_FOUND']);
+
 /** 兜底消息特征：官方码集合外但消息明确为瞬时网络/上游故障（如 PI_AI_ERROR: Upstream error…）。
  * 2026-08-31 追加：OpenRouter 上游 provider 故障标准文案 "Provider returned error"
  * （pi-ai adapter 兜底归类 PI_AI_ERROR，实证 minimax via openrouter 78s 无产出即此类；
- * 同 provider 稍后手动继续即成功 → 瞬时上游故障，应注入）。 */
-const NETWORK_FAILURE_PATTERN = /(upstream error|internal server error|service temporarily unavailable|currently overloaded|please try again later|all endpoints are currently overloaded|provider returned error|\b429\b|\b402\b|\b5\d\d\b|gateway time-?out|timed\s?out|fetch failed|econnreset|econnrefused|etimedout|socket hang up|network error|connection\s+(?:refused|reset|closed)|insufficient balance|payment required|payment required to access|quota exceeded|quota exhausted)/i;
+ * 同 provider 稍后手动继续即成功 → 瞬时上游故障，应注入）。
+ * 2026-09-01 追加：\b400\b（tokenrhythm/pi-ai 适配器兜底形态 "400 status code (no body)"——
+ * 用户裁定 400 与 402 同为可继续错误：瞬时请求被拒/上游 4xx 可恢复，应注入；
+ * 循环由 loop-guard 兜底（注入后再次失败无产出 → settled）。
+ * 2026-09-01 追加（二）：中文瞬时特征——用户实报 tokenrhythm 返回
+ * "模型服务暂时不可用，请稍后重试"（0 tok 即时失败，语义等同 service temporarily
+ * unavailable / please try again later）→ 判 network-stopped 注入；
+ * 循环由 loop-guard 兜底。
+ * 注意：CONTEXT_WINDOW_EXCEEDED 等永久码由 PERMANENT_LLM_CODES 先行排除。 */
+
+const NETWORK_FAILURE_PATTERN = /(upstream error|internal server error|service temporarily unavailable|currently overloaded|please try again later|all endpoints are currently overloaded|provider returned error|模型服务暂时不可用|服务暂时不可用|暂时不可用|请稍后重试|稍后再试|当前繁忙|服务器繁忙|\b400\b|\b429\b|\b402\b|\b5\d\d\b|gateway time-?out|timed\s?out|fetch failed|econnreset|econnrefused|etimedout|socket hang up|network error|connection\s+(?:refused|reset|closed)|insufficient balance|payment required|payment required to access|quota exceeded|quota exhausted)/i;
 
 /** 解开 DSH/OpenAI 风格错误信封：{ error: { code?, type?, message? } } → 递归剥到最内层对象。
  * 2026-08-31：由单层改为递归（外部用户环境 504 Gateway Time-out 曾因多层嵌套
@@ -86,6 +140,10 @@ function isNetworkFailure(error) {
   const inner = unwrapError(error);
   if (!inner || typeof inner !== 'object') return false;
   const code = typeof inner.code === 'string' ? inner.code : '';
+  // 2026-09-01：永久/配置类错误码先行排除——即使 message 命中网络特征
+  // （如 CONTEXT_WINDOW_EXCEEDED 携带 "400 status code (no body)"）也判非网络，
+  // 保 CHANGELOG 0.0.12 回归基线（上下文超限 settled 不注入）。
+  if (PERMANENT_LLM_CODES.has(code)) return false;
   if (RETRYABLE_LLM_CODES.has(code)) return true;
   const type = typeof inner.type === 'string' ? inner.type : '';
   if (RETRYABLE_LLM_TYPES.has(type)) return true;
@@ -146,10 +204,13 @@ export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT)
         break;
       case 'assistant/chunk':
       case 'assistant/message':
-        // 2026-08-31：assistant/chunk 同样计入「注入后进展」——流式推理块是模型已开始
+        // 2026-08-31：assistant/chunk 计入「注入后进展」——流式推理块是模型已开始
         // 产出的强证据（双注入守卫据此区分「注入后被环境杀死」与「注入后真实工作被打断」）。
+        // 2026-09-01 修正：仅**真实产出块**（text/reasoning/tool-call delta 与 block-*）
+        // 计入；usage/finish 是计费/结束元数据，请求被拒（如 402 无余额）也会写——
+        // 计入会让 loop-guard 失效造成无限注入（实证 401860fc 循环根因）。
         lastAssistant = event.seq;
-        if (lastOursSeq > -1) assistantAfterOurs = true;
+        if (lastOursSeq > -1 && (event.type === 'assistant/message' || isProgressChunk(event))) assistantAfterOurs = true;
         break;
       case 'user/message':
         lastUser = event.seq;
@@ -233,9 +294,14 @@ export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT)
     // 重试可恢复，注入「继续」让其自动重跑（2026-08-24 新增能力）。
     // 死循环守卫（2026-08-24）：若我们上次注入「继续」之后未产生任何内容/工具调用便再次
     // 以同类网络错误失败（模型持续空返回），判定为持续故障 → 转 settled 不注入，交由用户。
-    const continuedThenFell = lastOursSeq > -1 && lastTurnEnd > lastOursSeq && !assistantAfterOurs && !toolAfterOurs;
+    // 2026-09-01 强化（402 无限循环实证修复）：余额类错误（402/QUOTA/Insufficient balance）
+    // 是**持久性**故障——注入后即使有产出（如先吐 text 再 402），下次调用仍必失败；
+    // 注入「继续」后再次以余额类错误失败即转 settled，无论有无产出（首次 402 仍注入一次，
+    // 覆盖「充值后恢复」场景；充值/换 provider 后由用户手动继续或下次自然成功）。
+    const balanceFailed = isBalanceFailure(lastTurnEndError);
+    const continuedThenFell = lastOursSeq > -1 && lastTurnEnd > lastOursSeq && (balanceFailed || (!assistantAfterOurs && !toolAfterOurs));
     if (continuedThenFell) {
-      return { state: 'settled', reason: `autoresume continue led to immediate network failure with no progress (loop guard): ${describeFailure(lastTurnEndError)}` };
+      return { state: 'settled', reason: `autoresume continue led to ${balanceFailed ? 'persistent balance failure' : 'immediate network failure with no progress'} (loop guard): ${describeFailure(lastTurnEndError)}` };
     }
     return { state: 'network-stopped', reason: `last turn/end reason = error (network): ${describeFailure(lastTurnEndError)}` };
   }
@@ -472,6 +538,22 @@ export function apply(ctx, config = {}) {
   /** 每会话上次扫描到的 mtime：live 轮询据此跳过未变化的会话，避免反复读大事件流。 */
   const lastSeenMtime = new Map();
 
+  /**
+   * 2026-09-01：ctx.agents 惰性注入服务的防御访问。DSH cordis 框架在插件上下文未
+   * 活性/服务未注入就绪时用 Proxy 拦截对未注入服务的访问（抛 "cannot get required
+   * service \"agents\" in inactive context"），此时直接访问会导致插件树 fatal 崩溃
+   * 循环（实证 20:04-20:23 dsh-web 13 次崩溃）。先 try/catch 捕获，未就绪返回
+   * undefined 让调用方降级跳过（本轮不动作、下轮 poll 重试），不中断插件树加载。
+   */
+  function getAgent(sessionId) {
+    try {
+      return ctx.agents.get(sessionId);
+    } catch (error) {
+      ctx.logger.warn(`dsh-autoresume: ctx.agents not ready (inactive context) for ${sessionId} — skip, retry next poll: ${String(error?.message ?? error)}`);
+      return undefined;
+    }
+  }
+
   async function checkOnce(source) {
     if (settled) return;
     polls += 1;
@@ -494,9 +576,14 @@ export function apply(ctx, config = {}) {
     }
     for (const id of pendingResume) candidates.add(id);
     for (const sessionId of candidates) {
-      const agent = ctx.agents.get(sessionId);
+      // 2026-09-01 崩溃修复：ctx.agents 是惰性注入服务，在插件上下文未活性/服务注入
+      // 就绪前访问会抛 "cannot get required service \"agents\" in inactive context"
+      // （实证：boot 后 3s setTimeout 首轮 checkOnce 触发时上下文可能未活性 → fatal 崩溃循环）。
+      // 用防御助手访问：捕获后 warn 降级、本轮跳过该会话，下轮 poll 5s 后重试，不中断插件树加载。
+      const agent = getAgent(sessionId);
       if (agent === undefined) {
-        // agent 未 live：直读持久化流判定，被打断则自行 resume（持续在 pendingResume 待注入）
+        // agent 未 live / 服务未就绪（inactive context）：直读持久化流判定，
+        // 被打断则自行 resume（持续在 pendingResume 待注入）；服务就绪前跳过本轮。
         await runEarlyPath(sessionId);
         continue;
       }
@@ -529,8 +616,9 @@ export function apply(ctx, config = {}) {
   // ② 会话 agent 就绪事件：直接对「待注入」会话执行注入（不等 poll 轮）
   async function injectIfIdle(sessionId) {
     if (!pendingResume.has(sessionId)) return;
-    const agent = ctx.agents.get(sessionId);
-    if (agent === undefined) { console.error(`[dsh-autoresume] inject wait: ${sessionId} agent not live yet`); return; }
+    // 2026-09-01 崩溃修复：同 checkOnce，ctx.agents 未活性时防御性跳过（不再抛 inactive context）。
+    const agent = getAgent(sessionId);
+    if (agent === undefined) { console.error(`[dsh-autoresume] inject wait: ${sessionId} agent not live / service not ready`); return; }
     if (agent.status !== 'idle') { console.error(`[dsh-autoresume] inject wait: ${sessionId} agent status=${agent.status}`); return; }
     let inspection;
     try { inspection = await ctx.sessionPersistence.inspect(sessionId); }
