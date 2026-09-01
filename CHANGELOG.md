@@ -2,6 +2,14 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
+## 0.0.14 — 2026-09-01
+
+- **双注入守卫（重启/进程死亡循环守卫）**：网络分支 `continuedThenFell` 的同构守卫推广到 `interrupted` 分支——若「上次注入 → 模型零产出（assistant/chunk 与 assistant/message 都未出现，无工具调用）→ 再次被打断」，判定为**环境噪音**（dsh-web 崩溃循环 / 进程被 systemd 重启杀死 turn）而非真实业务中断，转 `settled` 不再注入，把决定权交还用户。守卫基于**持久化会话事件流**（不依赖进程内存态），跨进程/跨重启一致生效。
+- **`assistant/chunk` 计入「注入后进展」**：流式推理块是模型已开始产出的强证据——守卫据此区分「注入后被环境杀死（零 chunk/message）」与「注入后真实工作被打断（已有 chunk/message）」，真实中断仍正常续跑，不误伤。
+- **注入日志带 `inject#<id>`**：每条「继续」消息唯一 id（`randomUUID`），跨进程审计可精确定位「同一进程第几次注入」「不同进程各注入一次」（双注入事故根因分析用）。
+- **`agentOptions` 自动注入**（resume 修复）：从 `agentDefaultModel.currentSelection()` 取部署默认模型透传到 `ctx.agents.resume({ agentOptions })`——修复子代理（sidechat.start）首轮装配报 `prompt variable "{{model}}" has no value` 的隐性 race。
+- 验证：场景矩阵 **13/13 PASS**（双注入守卫两路：reasons.length 分支 + lastTurnEndReason='interrupted' 分支；assistant/chunk 计入；agentOptions 透传；回归 loop-guard / UNKNOWN_MODEL / network-stopped / 真实中断四路）。
+
 ## 0.0.13 — 2026-08-31
 
 - **OpenRouter 上游 provider 故障识别**：`NETWORK_FAILURE_PATTERN` 补 `provider returned error` 特征——OpenRouter 对上游 provider（如 minimax）故障的标准文案（pi-ai adapter 兜底归类 `PI_AI_ERROR`，属瞬时上游故障、同 provider 稍后可恢复）同样判 network-stopped 注入「继续（自动）」。实证：真实会话 78s 无产出以 `PI_AI_ERROR: Provider returned error` 收尾（旧版判 settled 不注入），同 provider 稍后手动「继续」即成功——确属瞬时上游故障，应注入。

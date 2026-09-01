@@ -144,7 +144,10 @@ export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT)
       case 'step/end':
         lastStepEnd = event.seq;
         break;
+      case 'assistant/chunk':
       case 'assistant/message':
+        // 2026-08-31：assistant/chunk 同样计入「注入后进展」——流式推理块是模型已开始
+        // 产出的强证据（双注入守卫据此区分「注入后被环境杀死」与「注入后真实工作被打断」）。
         lastAssistant = event.seq;
         if (lastOursSeq > -1) assistantAfterOurs = true;
         break;
@@ -184,13 +187,33 @@ export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT)
   if (openStep) reasons.push('open step');
   if (pendingTool) reasons.push(`${pendingCalls.size} pending tool call(s)`);
 
+  // 2026-08-31 双注入守卫（重启/进程死亡循环守卫）：
+  // 我们上次注入「继续」后未产生任何 assistant 内容/工具调用便再次进入 interrupted ——
+  // 说明注入被环境杀死（进程死亡/重启循环），而非真实业务中断 → 转 settled 不注入。
+  // 实证：16:48:28 boot#34 注入#1 → 16:48:30 systemd 重启杀死 turn 4（零产出）→
+  // 16:48:40 boot#35 重扫误判 interrupted 再注入#2。本守卫使 boot#35 判 settled。
+  // 与网络分支 continuedThenFell（~215 行）同构，但覆盖 interrupted（含 open turn/step）。
+  const injectionKilledWithoutProgress =
+    lastOursSeq > -1 &&                 // 注入过
+    lastUserIsOurs &&                   // 最后一条用户消息是我们的注入（无人工作介入）
+    lastOursSeq === lastUser &&         // 注入就是最后一条 user 消息
+    !assistantAfterOurs &&              // 注入后零 assistant 产出（chunk/message 均计入）
+    !toolAfterOurs &&                   // 注入后零工具调用
+    (lastTurnStart > lastOursSeq || lastTurnEnd > lastOursSeq); // 注入之后存在 turn 活动但零进展
+
   if (lastType === 'assistant/message') {
     return { state: 'completed', reason: 'last event is assistant/message' };
   }
   if (reasons.length > 0) {
+    if (injectionKilledWithoutProgress) {
+      return { state: 'settled', reason: 'autoresume inject interrupted before any progress (restart loop guard)' };
+    }
     return { state: 'interrupted', reason: reasons.join(' + ') };
   }
   if (lastTurnEndReason === 'interrupted') {
+    if (injectionKilledWithoutProgress) {
+      return { state: 'settled', reason: 'autoresume inject interrupted before any progress (restart loop guard)' };
+    }
     return { state: 'interrupted', reason: 'last turn/end reason = interrupted' };
   }
   if (lastUser > lastTurnEnd) {
@@ -372,8 +395,20 @@ export function apply(ctx, config = {}) {
       setup = undefined;
       ctx.logger.warn(`dsh-autoresume: preset compose for ${sessionId} failed, plain resume fallback: ${String(error?.message ?? error)}`);
     }
+    // 2026-08-31：resume 必须带 agentOptions（部署默认模型）——恢复后的 agent.options
+    // 若缺 model，sidechat.start 子代理继承 {...parent.options} 会得到空 options，
+    // 首轮装配即报 prompt variable "{{model}}" has no value。
+    let defaultAgentOptions;
+    try {
+      const defaultModel = ctx.get('agentDefaultModel');
+      const selected = defaultModel && typeof defaultModel.currentSelection === 'function' ? defaultModel.currentSelection() : undefined;
+      if (selected && typeof selected.provider === 'string' && selected.provider !== '' && typeof selected.model === 'string' && selected.model !== '') {
+        defaultAgentOptions = { provider: selected.provider, model: selected.model };
+      }
+    } catch { /* agentDefaultModel 缺失：保持无 options（组装仍靠 installSessionSelection 兜底） */ }
     await ctx.agents.resume({
       resumeSessionId: sessionId,
+      ...(defaultAgentOptions === undefined ? {} : { agentOptions: defaultAgentOptions }),
       ...(setup === undefined ? {} : { setup })
     });
   }
@@ -477,10 +512,12 @@ export function apply(ctx, config = {}) {
       console.error(`[dsh-autoresume] ${sessionId} state=${analysis.state} reason=${analysis.reason} source=${source}`);
       if (!isResumableState(analysis.state)) { pendingResume.delete(sessionId); continue; }
       try {
-        agent.send(buildContinueMessage(promptText), 'next-turn', true);
+        const msg = buildContinueMessage(promptText);
+        agent.send(msg, 'next-turn', true);
         injected = true;
         pendingResume.delete(sessionId);
-        ctx.logger.info(`dsh-autoresume: injected「${promptText}」into ${sessionId}`);
+        console.error(`[dsh-autoresume] injected「${promptText}」inject#${msg.id} session=${sessionId} source=${source}`);
+        ctx.logger.info(`dsh-autoresume: injected「${promptText}」inject#${msg.id} into ${sessionId}`);
       } catch (error) {
         ctx.logger.warn(`dsh-autoresume: inject into ${sessionId} failed: ${String(error?.message ?? error)}`);
       }
@@ -502,10 +539,11 @@ export function apply(ctx, config = {}) {
     console.error(`[dsh-autoresume] inject check ${sessionId} state=${analysis.state}`);
     if (!isResumableState(analysis.state)) { pendingResume.delete(sessionId); console.error(`[dsh-autoresume] inject skip: ${sessionId} state=${analysis.state}`); return; }
     try {
-      agent.send(buildContinueMessage(promptText), 'next-turn', true);
+      const msg = buildContinueMessage(promptText);
+      agent.send(msg, 'next-turn', true);
       injected = true;
       pendingResume.delete(sessionId);
-      console.error(`[dsh-autoresume] injected「${promptText}」into ${sessionId}`);
+      console.error(`[dsh-autoresume] injected「${promptText}」inject#${msg.id} session=${sessionId}`);
     } catch (error) {
       ctx.logger.warn(`dsh-autoresume: inject into ${sessionId} failed: ${String(error?.message ?? error)}`);
     }
