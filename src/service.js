@@ -10,6 +10,10 @@
  * provider 前每次 LLM 调用必失败），注入一次后若再次以余额类错误失败 → 转
  * settled 不再注入（首次 402 仍注入一次以覆盖「充值后恢复」场景；防真没余额
  * 时无限自动继续）。
+ * tpm/rpm 限流（2026-09-02）：sensenova 429 直出 `code=insufficient_quota,
+ * type=rate_limit_error, message="inference exceeds tpm/rpm limit"`——限流窗口
+ * 重置后可恢复，属瞬时网络故障 → 判 network-stopped 注入（非余额类；原被
+ * 三路特征全漏判 settled 不注入）。注入后仍靠 loop-guard 防无产出死循环。
  */
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -54,10 +58,14 @@ function isOurContinueMessage(event, continueText = DEFAULT_PROMPT_TEXT) {
  * DSH dsh-llm 官方可重试错误码（= 瞬时/网络类故障，重试可恢复），见
  * @deepseek-ai/dsh-llm retry-policy DEFAULT_RETRYABLE_CODES。
  */
-const RETRYABLE_LLM_CODES = new Set(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'rate_limit_exceeded', 'too_many_requests', 'QUOTA', 'insufficient_balance', 'payment_required']);
+const RETRYABLE_LLM_CODES = new Set(['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'rate_limit_exceeded', 'too_many_requests', 'QUOTA', 'insufficient_balance', 'payment_required', 'insufficient_quota']);
 
-/** DSH API 直出瞬时/上游错误 type（实证 service_unavailable；server_error 为 5xx 标准语义）。 */
-const RETRYABLE_LLM_TYPES = new Set(['service_unavailable', 'server_error']);
+/** DSH API 直出瞬时/上游错误 type（实证 service_unavailable；server_error 为 5xx 标准语义）。
+ * 2026-09-02 追加 rate_limit_error——sensenova 429 直出 `type=rate_limit_error`（code=insufficient_quota,
+ * message="inference exceeds tpm/rpm limit"），限流窗口重置后可恢复，属瞬时错误应注入。
+ * 2026-09-08 追加 quota_exceeded_error——sensenova「日日新」429 另一形态 `type=quota_exceeded_error,
+ * code="8", message="rpm exhausted"`（rpm 达上限，限流窗口重置可恢复），同属瞬时限流应注入。 */
+const RETRYABLE_LLM_TYPES = new Set(['service_unavailable', 'server_error', 'rate_limit_error', 'quota_exceeded_error']);
 
 /**
  * 余额类（持久性）错误：账户余额不足/配额耗尽——充值或换 provider 前每次 LLM
@@ -65,19 +73,34 @@ const RETRYABLE_LLM_TYPES = new Set(['service_unavailable', 'server_error']);
  * 注入「继续」后再次以余额类错误失败 → 判 settled 防无限循环。
  * 错误形态实证：{"message":"402 status code (no body)","code":"PI_AI_ERROR"}
  * 与 {"code":"QUOTA","message":"402 {\"error\":\"Insufficient balance\"}"}。
+ * 2026-09-02 修正：insufficient_quota 移入 RETRYABLE_LLM_CODES——sensenova 用该码表达
+ * tpm/rpm 限流（type=rate_limit_error、message="inference exceeds tpm/rpm limit"），
+ * 是限流窗口性瞬时错误而非余额不足（实测可随窗口重置恢复），不属余额类。
  */
-const BALANCE_LLM_CODES = new Set(['QUOTA', 'insufficient_balance', 'payment_required', 'payment_required_to_access', 'insufficient_quota']);
+const BALANCE_LLM_CODES = new Set(['QUOTA', 'insufficient_balance', 'payment_required', 'payment_required_to_access']);
 
 /** 余额类消息特征（与 NETWORK_FAILURE_PATTERN 中余额子集一致，单独抽出便于归类）。 */
 const BALANCE_FAILURE_PATTERN = /(\b402\b|insufficient balance|payment required|quota exceeded|quota exhausted|no balance|insufficient funds)/i;
+
+/** 限流类消息特征（与余额仲裁前置）：429/rate_limit/too many requests/tpm·rpm/insufficient_quota。
+ * 2026-09-08 实证：DSH 把 sensenova 429 包装成外层 code=QUOTA + message 内嵌
+ * `429: {"message":"inference exceeds tpm/rpm limit","type":"rate_limit_error","code":"insufficient_quota"}`——
+ * code 多义（QUOTA 同时承载"余额不足"与"限流"语义），须按消息特征先排除限流，
+ * 否则限流被误判余额 → 注入后无限不注入。余额语义仍由 BALANCE_LLM_CODES/402 特征覆盖。
+ * 2026-09-08（二）：Sensenova「日日新」加码 rpm/tpm exhausted 形态——`"message":"rpm exhausted"`。
+ */
+const RATE_LIMIT_MESSAGE_PATTERN = /(\b429\b|too many requests|rate[-_ ]?limit|rate_limit_error|tpm\/rpm|rpm exhausted|tpm exhausted|insufficient_quota|quota_exceeded)/i;
 
 /** 判定 turn/end 错误是否属于余额类（持久性，非瞬时）。 */
 function isBalanceFailure(error) {
   const inner = unwrapError(error);
   if (!inner || typeof inner !== 'object') return false;
   const code = typeof inner.code === 'string' ? inner.code : '';
-  if (BALANCE_LLM_CODES.has(code)) return true;
   const message = typeof inner.message === 'string' ? inner.message : '';
+  // 2026-09-08：限流消息先于余额码仲裁——sensenova 429 被包装为 code=QUOTA 属限流非余额；
+  // 消息命中限流特征（429/rate limit/tpm·rpm/insufficient_quota）→ 判非余额（可注入）。
+  if (RATE_LIMIT_MESSAGE_PATTERN.test(message)) return false;
+  if (BALANCE_LLM_CODES.has(code)) return true;
   return BALANCE_FAILURE_PATTERN.test(message);
 }
 
@@ -111,9 +134,13 @@ const PERMANENT_LLM_CODES = new Set(['UNKNOWN_MODEL', 'MISSING_CREDENTIAL', 'NO_
  * "模型服务暂时不可用，请稍后重试"（0 tok 即时失败，语义等同 service temporarily
  * unavailable / please try again later）→ 判 network-stopped 注入；
  * 循环由 loop-guard 兜底。
+ * 2026-09-02 追加：tpm/rpm 限流消息特征——sensenova 429 直出 message
+ * "inference exceeds tpm/rpm limit"（type=rate_limit_error、code=insufficient_quota），
+ * 限流窗口重置后可恢复，属瞬时可重试；同时覆盖 "rate limit"/"rate_limit"
+ * 文字形态（部分 provider 仅消息无码）。循环由 loop-guard 兜底。
  * 注意：CONTEXT_WINDOW_EXCEEDED 等永久码由 PERMANENT_LLM_CODES 先行排除。 */
 
-const NETWORK_FAILURE_PATTERN = /(upstream error|internal server error|service temporarily unavailable|currently overloaded|please try again later|all endpoints are currently overloaded|provider returned error|模型服务暂时不可用|服务暂时不可用|暂时不可用|请稍后重试|稍后再试|当前繁忙|服务器繁忙|\b400\b|\b429\b|\b402\b|\b5\d\d\b|gateway time-?out|timed\s?out|fetch failed|econnreset|econnrefused|etimedout|socket hang up|network error|connection\s+(?:refused|reset|closed)|insufficient balance|payment required|payment required to access|quota exceeded|quota exhausted)/i;
+const NETWORK_FAILURE_PATTERN = /(upstream error|internal server error|service temporarily unavailable|currently overloaded|please try again later|all endpoints are currently overloaded|provider returned error|模型服务暂时不可用|服务暂时不可用|暂时不可用|请稍后重试|稍后再试|当前繁忙|服务器繁忙|\b400\b|\b429\b|\b402\b|\b5\d\d\b|gateway time-?out|timed\s?out|fetch failed|econnreset|econnrefused|etimedout|socket hang up|network error|connection\s+(?:refused|reset|closed)|insufficient balance|payment required|payment required to access|quota exceeded|quota exhausted|tpm\/rpm|rpm exhausted|tpm exhausted|rate\s?limit|rate_limit)/i;
 
 /** 解开 DSH/OpenAI 风格错误信封：{ error: { code?, type?, message? } } → 递归剥到最内层对象。
  * 2026-08-31：由单层改为递归（外部用户环境 504 Gateway Time-out 曾因多层嵌套
@@ -167,7 +194,7 @@ function describeFailure(error) {
  * - settled：有闭合边界但既非 completed 也非 interrupted/network-stopped（如 cancelled/配置类 error），不动作避免注入循环；
  * - empty：尚无事件。
  */
-export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT) {
+export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT, maxResumeAttempts = 2) {
   const list = Array.isArray(events) ? events : [];
   if (list.length === 0) return { state: 'empty', reason: 'no events' };
 
@@ -184,6 +211,11 @@ export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT)
   let lastOursSeq = -1;
   let assistantAfterOurs = false;
   let toolAfterOurs = false;
+  // 2026-09-08：注入后连续「无产出网络失败」次数（failStreak）。商汤日日新（sensenova）
+  // 限流窗口长、常连续两次 429（rpm exhausted / tpm-rpm limit）——用户裁决允许**连续两次**
+  // 自动继续（maxResumeAttempts 默认 2）：注入后第一次无产出失败仍允许再注入一次，
+  // 第二次才转 settled 防死循环。余额类（isBalanceFailure）保持一次即停（持久性，§五十四）。
+  let failStreak = 0;
   const pendingCalls = new Set();
 
   for (const event of list) {
@@ -195,6 +227,12 @@ export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT)
         lastTurnEnd = event.seq;
         lastTurnEndReason = event.data?.reason?.kind ?? null;
         lastTurnEndError = event.data?.reason?.error ?? event.data?.reason?.failure ?? null;
+        // 2026-09-08：注入后失败 streak 统计——仅网络瞬时类摸板；注入后无产出再网络失败 → streak++，
+        // 注入后曾有产出（模型工作过）→ 重新武装 streak 归零（恢复满次数）。
+        if (lastOursSeq > -1 && lastTurnEnd > lastOursSeq && lastTurnEndReason === 'error' && isNetworkFailure(lastTurnEndError)) {
+          if (assistantAfterOurs || toolAfterOurs) failStreak = 0;
+          else failStreak += 1;
+        }
         break;
       case 'step/start':
         lastStepStart = event.seq;
@@ -299,9 +337,12 @@ export function analyzeSessionEvents(events, continueText = DEFAULT_PROMPT_TEXT)
     // 注入「继续」后再次以余额类错误失败即转 settled，无论有无产出（首次 402 仍注入一次，
     // 覆盖「充值后恢复」场景；充值/换 provider 后由用户手动继续或下次自然成功）。
     const balanceFailed = isBalanceFailure(lastTurnEndError);
-    const continuedThenFell = lastOursSeq > -1 && lastTurnEnd > lastOursSeq && (balanceFailed || (!assistantAfterOurs && !toolAfterOurs));
+    // 2026-09-08：死循环守卫放宽（商汤日日新裁决）——允许**连续两次**自动继续：
+    // 网络瞬时类在注入后无产出失败时，failStreak 达 maxResumeAttempts（默认 2）才转 settled；
+    // 余额类（持久性，§五十四）保持「注入后再次失败无论有无产出一次即停」，防真没余额无限循环。
+    const continuedThenFell = lastOursSeq > -1 && lastTurnEnd > lastOursSeq && (balanceFailed || failStreak >= maxResumeAttempts);
     if (continuedThenFell) {
-      return { state: 'settled', reason: `autoresume continue led to ${balanceFailed ? 'persistent balance failure' : 'immediate network failure with no progress'} (loop guard): ${describeFailure(lastTurnEndError)}` };
+      return { state: 'settled', reason: `autoresume continue led to ${balanceFailed ? 'persistent balance failure' : `network failure without progress (${failStreak}/${maxResumeAttempts} attempts)`} (loop guard): ${describeFailure(lastTurnEndError)}` };
     }
     return { state: 'network-stopped', reason: `last turn/end reason = error (network): ${describeFailure(lastTurnEndError)}` };
   }
@@ -366,6 +407,9 @@ export function apply(ctx, config = {}) {
   // 受 analyzeSessionEvents 的 loop-guard 约束（模型持续空返回时转 settled 不注入），避免死循环。
   // false 则回退旧的一次性 boot 行为（首批注入后 disarm）。
   const liveWatch = config.liveWatch !== false;
+  // 2026-09-08（商汤日日新裁决）：允许连续两次自动继续——网络瞬时类在注入后无产出失败时
+  // 最多重试 maxResumeAttempts 次（默认 2）才转 settled；余额类不受影响（一次即停）。
+  const maxResumeAttempts = positiveInt(config.maxResumeAttempts, 2);
 
   const bootStartedAtMs = Date.now() - Math.floor(process.uptime() * 1000);
   let settled = false;
@@ -488,7 +532,7 @@ export function apply(ctx, config = {}) {
       let analysis;
       try {
         const inspection = await ctx.sessionPersistence.inspect(sessionId);
-        analysis = analyzeSessionEvents(inspection.events, promptText);
+        analysis = analyzeSessionEvents(inspection.events, promptText, maxResumeAttempts);
         console.error(`[dsh-autoresume] early inspect ${sessionId} state=${analysis.state} reason=${analysis.reason}`);
       } catch (error) {
         ctx.logger.warn(`dsh-autoresume: early inspect(${sessionId}) failed: ${String(error?.message ?? error)}`);
@@ -595,7 +639,7 @@ export function apply(ctx, config = {}) {
         ctx.logger.warn(`dsh-autoresume: inspect(${sessionId}) failed: ${String(error?.message ?? error)}`);
         continue;
       }
-      const analysis = analyzeSessionEvents(inspection.events, promptText);
+      const analysis = analyzeSessionEvents(inspection.events, promptText, maxResumeAttempts);
       console.error(`[dsh-autoresume] ${sessionId} state=${analysis.state} reason=${analysis.reason} source=${source}`);
       if (!isResumableState(analysis.state)) { pendingResume.delete(sessionId); continue; }
       try {
@@ -623,7 +667,7 @@ export function apply(ctx, config = {}) {
     let inspection;
     try { inspection = await ctx.sessionPersistence.inspect(sessionId); }
     catch (error) { ctx.logger.warn(`dsh-autoresume: inject inspect(${sessionId}) failed: ${String(error?.message ?? error)}`); return; }
-    const analysis = analyzeSessionEvents(inspection.events, promptText);
+    const analysis = analyzeSessionEvents(inspection.events, promptText, maxResumeAttempts);
     console.error(`[dsh-autoresume] inject check ${sessionId} state=${analysis.state}`);
     if (!isResumableState(analysis.state)) { pendingResume.delete(sessionId); console.error(`[dsh-autoresume] inject skip: ${sessionId} state=${analysis.state}`); return; }
     try {

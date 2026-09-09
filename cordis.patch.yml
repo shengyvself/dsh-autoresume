@@ -9,3 +9,4 @@
         pollIntervalMs: 5000
         liveWatch: true
         promptText: '继续（自动）'
+        maxResumeAttempts: 2

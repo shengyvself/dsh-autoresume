@@ -6,6 +6,8 @@
 > **OpenRouter 上游 provider 故障（v0.0.13，2026-08-31）**：`NETWORK_FAILURE_PATTERN` 补 `provider returned error` 特征——OpenRouter 对上游 provider（如 minimax）故障的标准文案（pi-ai adapter 兜底归类 `PI_AI_ERROR`，属瞬时上游故障、同 provider 稍后可恢复）同样判 network-stopped 注入。
 > **402/400/中文瞬时可继续（v0.0.15，2026-09-01）**：① 402/余额类（`QUOTA`/`insufficient_balance`/`payment_required`/`402`/`insufficient balance`）注入后**再次以余额类错误失败一律转 `settled`**——余额不足是持久性状态（充值/换 provider 前每次调用必失败），防「真没余额」时自动继续无限循环（此前 usage/finish 元数据被误计为产出导致 loop-guard 失效）；首次 402 仍注入一次（覆盖充值后恢复）。② `400 status code (no body)`（tokenrhythm 兜底形态）与中文瞬时特征（`模型服务暂时不可用`/`请稍后重试`/`当前繁忙` 等）判 network-stopped 注入；新增 `PERMANENT_LLM_CODES` 排除永久码（`UNKNOWN_MODEL`/`CONTEXT_WINDOW_EXCEEDED` 等）——上下文超限即使携带 400 message 也 settled 不注入。
 > **启动崩溃修复（v0.0.16，2026-09-01）**：`ctx.agents` 是惰性注入服务，在插件上下文未活性/服务注入未就绪时直接访问会触发 cordis `inactive context` 守卫拦截 → 插件树加载 fatal 崩溃循环（DSH 0.1.2-alpha.3 升级后实证）。`checkOnce()`/`injectIfIdle()` 改用防御助手 `getAgent()`（try/catch 捕获异常 → warn 降级 → 返回 undefined，下轮 poll 重试），不再中断插件树加载。
+> **tpm/rpm 限流识别（v0.0.17，2026-09-02）**：sensenova 429 直出 `code=insufficient_quota`、`type=rate_limit_error`、message `inference exceeds tpm/rpm limit`——限流窗口重置后可恢复，属瞬时网络故障，判 network-stopped 注入「继续（自动）」（修复前三路特征全漏判 settled 不注入）。`insufficient_quota` 由余额类移入瞬时可重试类；**DSH 把 429 包装成外层 `code=QUOTA`（message 内嵌 429/rate_limit_error/insufficient_quota）的形态亦覆盖**——`isBalanceFailure` 新增限流消息特征先行仲裁（余额类仍为 QUOTA/insufficient_balance/payment_required/402 特征，防无限循环语义不变）。
+> **连续两次自动继续（v0.0.18，2026-09-08，商汤日日新裁决）**：网络瞬时类失败（429/限流等）在注入「继续（自动）」后再次失败且无产出时，允许**再注入一次**（`maxResumeAttempts` 默认 2，即「注入→败→再注入→败→停」），适配商汤日日新限流窗口长、常连续两次 429（`rpm exhausted` / `tpm-rpm limit`）的场景；余额类（402/QUOTA 等）保持「注入后再次失败一次即停」防无限循环（v0.0.15 语义不变）。新形态识别：`type=quota_exceeded_error`、message `rpm exhausted`/`tpm exhausted`、数字码 `8`/`429001` 均判 network-stopped 注入。
 > 兼容模式：配置 `targetSessionId` 时退化为旧行为（只服务该会话）。
 > **运行期间再次网络失败（v0.0.9，2026-08-24）**：`liveWatch`（默认 true）使插件在 boot 扫描后保持轮询，补 catch 同一会话在运行期间**再次**以网络/瞬时失败停止（此前只有在 web 重启后才一次性生效）；并加**死循环守卫**——若上次注入「继续」之后未产生任何内容/工具调用便再次以同类网络错误失败（模型持续返回空内容，例如某些强制推理的隐身模型），判定为持续故障转 `settled` 不再注入，交由用户手动处理；会话之后有产出或新用户消息则重新武装。
 
@@ -25,11 +27,12 @@
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `targetSessionId` | 上面写死的开发会话 | 只允许改这一个目标，绝不扫描其他会话 |
-| `bootGraceMs` | `120000` | web 进程启动后允许判定的宽限窗口 |
+| `bootGraceMs` | `Infinity` | web 进程启动后允许判定的宽限窗口（v0.0.10 起默认永久不睡；可显式配数值回归旧行为） |
 | `initialDelayMs` | `3000` | 首次检查延迟（等会话恢复） |
 | `pollIntervalMs` | `5000` | 会话未就绪时的重查间隔 |
 | `promptText` | `继续（自动）` | 注入正文 |
 | `liveWatch` | `true` | boot 后保持轮询补 catch 运行期间再次网络/瞬时失败；配 loop-guard 防模型持续空返回死循环 |
+| `maxResumeAttempts` | `2` | 网络瞬时类失败连续自动继续次数上限（2026-09-08 商汤日日新裁决：允许连续两次，第二次失败后停）；余额类不受此限制（一次即停） |
 
 ## 安装与验证
 ```bash
@@ -49,17 +52,3 @@ dsh --profile web --dump-config   # 应出现 id: dsh-autoresume、name: dsh-aut
 ## 卸载/禁用
 - 卸载：`dsh plugin --profile web remove dsh-autoresume`
 - 热禁用：在 web profile `cordis.patch.yml` 给 `dsh-autoresume` 入口加 `disabled: true`。
-
-## 版本历史
-
-| 版本 | 日期 | GitHub 发布 | 要点 |
-|---|---|---|---|
-| v0.0.9 | 2026-08-24 | ✅ Release+tgz | 全域 interrupted-session 扫描 + liveWatch + 死循环守卫（首个对外 Release） |
-| v0.0.10 | 2026-08-27 | ✅ Release+tgz | 永久自动守护（`bootGraceMs` 默认 → Infinity） |
-| v0.0.11 | 2026-08-29 | ✅ Release+tgz | 402/QUOTA 余额类失败自动继续 |
-| v0.0.12 | 2026-08-31 | ✅ Release+tgz | 504 Gateway Time-out 递归解包修复 |
-| v0.0.13 | 2026-08-31 | ✅ Release+tgz | `provider returned error`（OpenRouter 上游 provider 故障）识别 |
-| v0.0.14 | 2026-09-01 | ✅ Release+tgz | 修复「双注入」bug |
-| v0.0.16 | 2026-09-01 | ✅ Release+tgz | 启动崩溃修复（`ctx.agents` inactive-context guard）+ v0.0.15 backport |
-
-> **早期版本说明**：v0.0.2 ~ v0.0.8 为 legacy 编号期——`CHANGELOG.md` 有逐版本文字记载，但 git 历史无独立 commit（源码不可追溯），故 GitHub 无对应 tag/Release，**不补造**。v0.0.10.1 为 docs-only、v0.0.15 并入 v0.0.16，均无独立 Release。可下载的正式版本以 [Releases](https://github.com/shengyvself/dsh-autoresume/releases) 为准。

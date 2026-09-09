@@ -2,6 +2,20 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
+## 0.0.18 — 2026-09-08
+
+- **连续两次自动继续（商汤日日新裁决）**：用户反馈「针对商汤日日新，允许连续两次自动继续」——sensenova 限流窗口长，常连续两次 429（`rpm exhausted` / `inference exceeds tpm/rpm limit`），此前 loop-guard 在注入「继续」后再次失败即转 settled。**修复**：新增 `maxResumeAttempts` 配置（默认 2）＋ `failStreak` 计数——网络瞬时类在注入后无产出失败时，failStreak 达上限（默认 2）才转 settled（注入→败→再注入→败→停）；有产出则重新武装归零；**余额类（`isBalanceFailure`）保持注入后再次失败一次即停**（0.0.15 防 402 无限循环语义不变）。
+- **新形态 429 识别**（sensenova「日日新」）：`type=quota_exceeded_error`（`code="8"`、message `rpm exhausted`）与 `type=rate_limit_error`（`code="429001"`、message `inference exceeds tpm/rpm limit`）——`RETRYABLE_LLM_TYPES` 增 `quota_exceeded_error`；`NETWORK_FAILURE_PATTERN` 补 `rpm exhausted|tpm exhausted`；`RATE_LIMIT_MESSAGE_PATTERN` 同步补（防 QUOTA 包装限流误判余额）。
+- 验证：① node --check OK；② build src→lib 一致（md5 `492a3f16…`）；③ import 冒烟 exports 5 项；④ 场景矩阵 **18/18 PASS**（A 新形态 5 例：rpm exhausted 全形态/仅 message/仅 type/429001/裸 insufficient_quota→network-stopped；B 连续两次 4 例：注入1次无产出再败→仍 network-stopped（允许第2次）、注入2次无产出再败→settled（2次已满）、注入后 tool/text 产出再败→重新武装 network-stopped；C 余额防循环 3 例：QUOTA 首败注入/注入后无论有无产出再败→settled 保持；D 回归 6 例：UNKNOWN_MODEL/CTX/429/service_unavailable/completed/QUOTA包装429）；⑤ 重启（PID 230396→…，Result=success NRestarts=0）3 连测 200×3＋journalctl 无错误。
+- 配置：组合层＋模块层＋web profile 三层 patch 均加 `maxResumeAttempts: 2`；README 配置表/行为说明同步。
+
+## 0.0.17 — 2026-09-02
+
+- **sensenova 429 tpm/rpm 限流识别修复**（用户直报：本轮运行失败 429 `{"message":"inference exceeds tpm/rpm limit","type":"rate_limit_error","code":"insufficient_quota"}`（provider=sensenova, model=deepseek-v4-flash）——「自动继续没有生效」）。根因：`isNetworkFailure()` 对该形态三路特征全漏——`insufficient_quota` 不在 `RETRYABLE_LLM_CODES`（虽在 `BALANCE_LLM_CODES` 但被 `isNetworkFailure` 先闸挡在门外，且余额语义与限流语义冲突）、`rate_limit_error` 不在 `RETRYABLE_LLM_TYPES`、message `inference exceeds tpm/rpm limit` 不匹配 `NETWORK_FAILURE_PATTERN` → 判 `settled` 不注入。**修复**：① `RETRYABLE_LLM_CODES` 增 `insufficient_quota`；② `RETRYABLE_LLM_TYPES` 增 `rate_limit_error`；③ `BALANCE_LLM_CODES` 移除 `insufficient_quota`——sensenova 用该码表达 **tpm/rpm 限流**（限流窗口重置后可恢复，属瞬时网络错误），非余额持久（§五十四 402 防无限循环不受影响：QUOTA/insufficient_balance/payment_required/402 pattern 均保留）；④ `NETWORK_FAILURE_PATTERN` 追加 `tpm\/rpm|rate\s?limit|rate_limit` 消息特征兜底（部分 provider 仅消息无码）。
+- **QUOTA 包装 429 消息级仲裁（同轮补记，journal 取证）**：真实持久化形态为 DSH 把 sensenova 429 包装成外层 `code=QUOTA` + message 内嵌 `429: {"message":"inference exceeds tpm/rpm limit","type":"rate_limit_error","code":"insufficient_quota"}`——QUOTA 码多义（余额/限流），仅靠码表会误判余额转 settled 不注入。修复：`isBalanceFailure` 新增 `RATE_LIMIT_MESSAGE_PATTERN`（`429|too many requests|rate[-_ ]?limit|rate_limit_error|tpm\/rpm|insufficient_quota`）**消息级先行仲裁**——命中限流特征即判非余额（可注入）；余额语义仍由 BALANCE_LLM_CODES/402 特征覆盖，防无限循环语义不变。
+- 验证：① node --check OK；② build src→lib 一致（md5 `849cde99…`）；③ import 冒烟 exports 5 项；④ 场景矩阵 **13/13 PASS**（修复前基线 4 FAIL 全修复：裸 insufficient_quota/仅 type/仅 message/QUOTA 包装 429 首次→network-stopped；注入后无产出再败→settled（loop-guard）；注入后有限产出再败→network-stopped（重新武装）；QUOTA 余额 402 首次→network-stopped、注入后有限产出再败→settled（余额防循环保持）；UNKNOWN_MODEL/CTX 超限带 400/429/service_unavailable/completed 回归全绿）；⑤ 重启（PID 186754→223682，Result=success NRestarts=0）3 连测 200×3（401 为 token 认证预期）+ journalctl 取证 `[dsh-autoresume] … QUOTA: 429: {"message":"inference exceeds tpm/rpm limit",...}`（第二层修复目标形态已现于日志）。
+- 附：README 配置表 `bootGraceMs` 默认值修正为 `Infinity`（v0.0.10 起默认永久不睡，文档曾滞后写 120000）。
+
 ## 0.0.16 — 2026-09-01
 
 - **启动崩溃循环修复（ctx.agents inactive-context 防御）**：DSH 0.1.2-alpha.3 升级后，插件在插件树加载阶段因 `ctx.agents.get()` 在**插件上下文未活性/服务注入未就绪**时访问触发 cordis `inactive context` 守卫拦截而抛 `fatal load failure: Error: cannot get required service "agents" in inactive context`（journal 实证崩溃循环 restart 达 13 次，`checkOnce` 处 `setTimeout` 3s 首轮触发时上下文可能未活性）。**修复**：新增防御助手 `getAgent(sessionId)`（`try/catch` 捕获 inactive-context 异常 → `ctx.logger.warn` → 返回 `undefined`，参考 prompt-polish `ctx 服务访问 try/catch 降级` 范式）；`checkOnce()` 与 `injectIfIdle()` 两处 `ctx.agents.get()` 改用该助手——未就绪时 warn 降级、本轮跳过该会话，下轮 5s poll 重试，不中断插件树加载。核对其余访问点已受保护（`ctx.sessionPersistence.inspect` 已各自 try/catch、`resumeSession` 内 inspect/resume 有外层 try/catch），无需再补。
