@@ -2,6 +2,11 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
+## 0.0.19 — 2026-09-09
+
+- **README 跨平台修正**（用户直报「插件介绍有问题，不是所有人都用的 Linux 系统」）。源码实际已跨平台（`process.env.HOME ?? os.homedir()` + `node:path`，Windows/Linux/macOS 行为一致），但 README 有 3 处 Unix/Linux 假设：① `~/.dsh/sessions`（Unix `~` 符号）；② Unix 路径分隔 `/`；③ 安装步骤 `mkdir -p` / `ln -sfn /usr/lib/...` / `sudo systemctl restart dsh-web`。**修正**：① 所有 `~/.dsh/sessions` 改为 `<home>/.dsh/sessions`，README 顶部加「跨平台（v0.0.19）」说明块，标注 `<home>` = 用户家目录（Linux/macOS: `~`，Windows: `%USERPROFILE%`），Node 通过 `os.homedir()` 自动解析；② 第 15 行补充「路径分隔由 Node 的 `node:path` 按平台自动处理」；③ 安装步骤拆为「Linux/macOS」与「Windows PowerShell」双代码块（Windows 用 `New-Item -Force` + `mklink /D`，DSH 路径用 `npm root -g` 探测）；④ 重启说明改为 3 平台并列：`sudo systemctl restart dsh-web`（Linux systemd）/ `brew services restart dsh-web`（macOS Homebrew）/ `Restart-Service dsh-web`（Windows 管理员 PowerShell）。
+- 验证：`node --check` src/lib 全绿；隐私扫描 0 命中；`git diff --stat` 仅 README/CHANGELOG/package.json 3 文件变更，src/lib 零改动。
+
 ## 0.0.18 — 2026-09-08
 
 - **连续两次自动继续（商汤日日新裁决）**：用户反馈「针对商汤日日新，允许连续两次自动继续」——sensenova 限流窗口长，常连续两次 429（`rpm exhausted` / `inference exceeds tpm/rpm limit`），此前 loop-guard 在注入「继续」后再次失败即转 settled。**修复**：新增 `maxResumeAttempts` 配置（默认 2）＋ `failStreak` 计数——网络瞬时类在注入后无产出失败时，failStreak 达上限（默认 2）才转 settled（注入→败→再注入→败→停）；有产出则重新武装归零；**余额类（`isBalanceFailure`）保持注入后再次失败一次即停**（0.0.15 防 402 无限循环语义不变）。
