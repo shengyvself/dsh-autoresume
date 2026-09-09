@@ -49,3 +49,17 @@ dsh --profile web --dump-config   # 应出现 id: dsh-autoresume、name: dsh-aut
 ## 卸载/禁用
 - 卸载：`dsh plugin --profile web remove dsh-autoresume`
 - 热禁用：在 web profile `cordis.patch.yml` 给 `dsh-autoresume` 入口加 `disabled: true`。
+
+## 版本历史
+
+| 版本 | 日期 | GitHub 发布 | 要点 |
+|---|---|---|---|
+| v0.0.9 | 2026-08-24 | ✅ Release+tgz | 全域 interrupted-session 扫描 + liveWatch + 死循环守卫（首个对外 Release） |
+| v0.0.10 | 2026-08-27 | ✅ Release+tgz | 永久自动守护（`bootGraceMs` 默认 → Infinity） |
+| v0.0.11 | 2026-08-29 | ✅ Release+tgz | 402/QUOTA 余额类失败自动继续 |
+| v0.0.12 | 2026-08-31 | ✅ Release+tgz | 504 Gateway Time-out 递归解包修复 |
+| v0.0.13 | 2026-08-31 | ✅ Release+tgz | `provider returned error`（OpenRouter 上游 provider 故障）识别 |
+| v0.0.14 | 2026-09-01 | ✅ Release+tgz | 修复「双注入」bug |
+| v0.0.16 | 2026-09-01 | ✅ Release+tgz | 启动崩溃修复（`ctx.agents` inactive-context guard）+ v0.0.15 backport |
+
+> **早期版本说明**：v0.0.2 ~ v0.0.8 为 legacy 编号期——`CHANGELOG.md` 有逐版本文字记载，但 git 历史无独立 commit（源码不可追溯），故 GitHub 无对应 tag/Release，**不补造**。v0.0.10.1 为 docs-only、v0.0.15 并入 v0.0.16，均无独立 Release。可下载的正式版本以 [Releases](https://github.com/shengyvself/dsh-autoresume/releases) 为准。
