@@ -1,5 +1,9 @@
 # dsh-autoresume（重启后自动继续）
 
+> **自动继续恢复链路修复（v0.0.20＋v0.0.21，2026-09-13，用户实报「自动继续没有在这里生效」）**：① 0.1.5 的 `ctx.sessionPersistence` **移除了 `inspect()`**（旧调用每次都抛、异常只进 `logger.warn` 不进 journal）→ 改 `open(id,'read')`／`read()`／`close()`。② 0.1.5 的 `AgentSetup` 回调签名变为 `(agentCtx, agent)`，旧代码读 `agentCtx.agent` 会抛错使 `agents.resume()` 整体 reject → 会话被部分挂起但**不注入**「继续（自动）」；现按新签名传参、缺失时显式报错。
+> **会话读取契约修复（v0.0.20，2026-09-13）**：DSH 0.1.5 的 `ctx.sessionPersistence` **移除了 `inspect()`**（只剩 create/open/flush/stat/list），旧调用每次都抛、异常只进 `logger.warn` 不进 journal → 重启后自动继续**静默失效**。现改为 `open(id,'read')` → `handle.read()` → `handle.close()`（会话不存在则不动作）。
+> **队列守卫（v0.0.19，2026-09-13，用户实报 bug 修复）**：inbox 里若有**别人**（用户/客户端）的挂起消息，插件**一律不动作**——既不注入「继续（自动）」也不 resume。旧行为下 `send(..., wakeup=true)` 会把挂起的用户消息一并唤醒冲进会话，而我们这条「继续」排在其后表现为「进入排队」。判据双路：持久化流 `agent/inbox/spliced` 折叠（未 resume 路径）＋ 活体 `agent.inbox.nextTurn/nextStep`（已在线路径）；`skipWhenInputPending: false` 可关闭（回到旧行为）。
+> **DSH 0.1.5 会话代际（v0.0.19）**：0.1.5-rc.2 起当前代际会话日志为 `session.v3.jsonl.zstd`（`session.jsonl.zstd` 为历史代际），扫描按代际取最高。
 > **跨平台（v0.0.19，2026-09-09）**：插件本体已跨平台——源码用 Node `os.homedir()` + `node:path` 解析家目录与路径分隔（Linux/macOS: `~` 与 `/`，Windows: `%USERPROFILE%` 与 `\`），行为完全一致；本 README 里所有 `<home>` 占位符即指用户家目录，请按你实际系统替换。
 > **全域模式（v0.0.5，2026-08-23）**：web 重启后，**任何被重启中断任务的会话**都会自动继续——扫描 `<home>/.dsh/sessions` 全部会话（仅处理最后活动在 `scanWindowMs`（默认 24h）内的），持久化事件流停在被打断中间态的注入「继续」；completed/settled 一律不动；正在运行的会话绝不打断。
 > **网络故障停止（v0.0.8，2026-08-24）**：会话因**网络/瞬时故障**停止（最后一个 `turn/end` 为 `error`，错误码属 DSH 可重试集合 `EMPTY_RESPONSE/RATE_LIMIT/SERVER/TIMEOUT/TRANSPORT` 及 429 直出码 `rate_limit_exceeded`/`too_many_requests`，或消息命中网络特征如 `upstream error`/`429`/`5xx`/`timeout`/`fetch failed`/`ECONNRESET`/`service temporarily unavailable`；支持 DSH/OpenAI 风格错误信封 `{error:{code,type,message}}`（含 `type=service_unavailable`））同样注入「继续（自动）」让其自动重跑；**配置/模型类错误**（`UNKNOWN_MODEL`/`MISSING_CREDENTIAL`/`NO_ADAPTER` 等）维持 settled 不注入，避免死循环。
@@ -34,6 +38,7 @@
 | `promptText` | `继续（自动）` | 注入正文 |
 | `liveWatch` | `true` | boot 后保持轮询补 catch 运行期间再次网络/瞬时失败；配 loop-guard 防模型持续空返回死循环 |
 | `maxResumeAttempts` | `2` | 网络瞬时类失败连续自动继续次数上限（2026-09-08 商汤日日新裁决：允许连续两次，第二次失败后停）；余额类不受此限制（一次即停） |
+| `skipWhenInputPending` | `true` | 队列守卫（2026-09-13）：inbox 有非我方挂起消息时不注入、不 resume；`false` 回到旧行为 |
 
 ## 安装与验证
 

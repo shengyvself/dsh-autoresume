@@ -2,10 +2,28 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
-## 0.0.19 — 2026-09-09
+## 0.0.21 — 2026-09-13
 
-- **README 跨平台修正**（用户直报「插件介绍有问题，不是所有人都用的 Linux 系统」）。源码实际已跨平台（`process.env.HOME ?? os.homedir()` + `node:path`，Windows/Linux/macOS 行为一致），但 README 有 3 处 Unix/Linux 假设：① `~/.dsh/sessions`（Unix `~` 符号）；② Unix 路径分隔 `/`；③ 安装步骤 `mkdir -p` / `ln -sfn /usr/lib/...` / `sudo systemctl restart dsh-web`。**修正**：① 所有 `~/.dsh/sessions` 改为 `<home>/.dsh/sessions`，README 顶部加「跨平台（v0.0.19）」说明块，标注 `<home>` = 用户家目录（Linux/macOS: `~`，Windows: `%USERPROFILE%`），Node 通过 `os.homedir()` 自动解析；② 第 15 行补充「路径分隔由 Node 的 `node:path` 按平台自动处理」；③ 安装步骤拆为「Linux/macOS」与「Windows PowerShell」双代码块（Windows 用 `New-Item -Force` + `mklink /D`，DSH 路径用 `npm root -g` 探测）；④ 重启说明改为 3 平台并列：`sudo systemctl restart dsh-web`（Linux systemd）/ `brew services restart dsh-web`（macOS Homebrew）/ `Restart-Service dsh-web`（Windows 管理员 PowerShell）。
-- 验证：`node --check` src/lib 全绿；隐私扫描 0 命中；`git diff --stat` 仅 README/CHANGELOG/package.json 3 文件变更，src/lib 零改动。
+- **关键修复（二）：0.1.5 `AgentSetup` 回调签名变更 → resume 事务失败，自动继续仍不注入**。
+  - **根因**：dsh-agent 的 `AgentSetup = (agentCtx: Context, agent: Agent) => …`；旧代码只收 `agentCtx` 并从 `agentCtx.agent` 取 agent → 0.1.5 上取不到 → `installModelSelection(undefined.ctx)` 抛错 → `ctx.agents.resume()` **整体 reject**。实机取证（2026-09-13 00:44 重启）：journal 出现 `early inspect … state=interrupted` 与 `agent/session-start observed`，但**没有** `self-resumed` / `injected`——会话被部分挂起却不注入「继续（自动）」。
+  - **修复**：3 处 `setup` 闭包改 `(agentCtx, agent)`；`installSessionSelection(agent, agentCtx)`（拿不到 agent 时**显式抛错**，不静默跳过）。
+  - **回归**：`tests/inspect-open.test.mjs` **4/4**（新增静态守卫：`setup = async (agentCtx, agent)`、`installSessionSelection(agent, agentCtx)`、且不得再出现旧签名）。
+
+## 0.0.20 — 2026-09-13
+
+- **关键修复：0.1.5 移除 `SessionPersistence.inspect()` → 自动继续静默失效**（用户实报「自动继续没有在这里生效」）。
+  - **根因（0.1.5 契约取证）**：`@deepseek-ai/dsh-session-persistence` 公开面只剩 `create / open(id, access) / flush / stat / list`，**没有 `inspect`**。旧代码 4 处 `await ctx.sessionPersistence.inspect(id)` 在 0.1.5 上**每次都抛**（`... is not a function`），而 catch 只走 `ctx.logger.warn`（**不进 journal**）→ 重启后 journal 里连一条 `early inspect` 都没有，会话永远不被续跑。
+  - **修复**：新增 `inspectSession(id)`＝`ctx.sessionPersistence.open(id, 'read')` → `handle.read()` → `handle.close()`（finally 保证释放）；返回形状保持 `{ meta: handle.header, events }`，与既有 `sessionPresetId` / `analyzeSessionEvents` 调用点完全兼容；会话不存在（open 抛错）→ 返回 undefined，调用方按「不动作」处理（不注入、不 resume）。
+  - **影响面**：仅 dsh-autoresume（全仓唯一使用 `inspect` 的模块；已核查 writing/NCE/roundtable/reading-pad 无此调用）。
+  - **回归**：`tests/inspect-open.test.mjs` **3/3**（源码静态守卫：不得再出现 `await ctx.sessionPersistence.inspect(`；早期路径端到端：open('read') 读事件→判定 interrupted→自行 resume；会话不存在不崩不 resume）；与 `tests/pending-input.test.mjs` **27/27** 合并全绿；build src==lib。
+
+## 0.0.19 — 2026-09-13
+
+- **队列守卫（用户实报 bug 修复）**：现象「自动继续会把**正在排队的**消息发进会话，而『继续（自动）』却**进入排队**」。根因（0.1.5 代码取证）：注入走 `agent.send(message, 'next-turn', true)`，`wakeup=true` 唤醒 driver，而 `next-turn` 是**有序**挂起列表——driver 会把 inbox 里所有挂起消息（含用户排队的那批）一并认领进会话，我们这条则排在其后成为「排队不执行」。**修复**：新增 `skipWhenInputPending`（默认 `true`）队列守卫，两条判据——
+  ① **持久化判据**：折叠 `agent/inbox/spliced` 事件（与宿主 session-projection 的 inbox 投影同款 splice 语义）得到挂起列表；若存在**非我方**挂起消息 → 新状态 `pending-input`，既不注入也不 `resume`（resume 同样会唤醒挂起输入）；若挂起的是我方上一条「继续」（尚无对应 `user/message` 事件）→ `completed`，不重复注入。
+  ② **活体判据**：注入前读 `agent.inbox.nextTurn / nextStep`（dsh-agent 运行面正式接口）；非空 → 跳过；接口不可读 → 记录 warn 并**保守不注入**（不猜、不兜底）。
+- **DSH 0.1.5-rc.2 适配**：① 会话日志代际——`SESSION_FORMAT_VERSION=3`，当前代际文件名为 `session.v3.jsonl.zstd`（旧名 `session.jsonl.zstd` 是历史代际）；枚举改为按代际取最高（原实现只认旧名，0.1.5 下扫不到活跃会话）；② 注入/恢复链路核对：`agent.send/followup/steer/inject`、`agent.inbox`、`agents.resume`、`sessionPersistence.inspect`（返回 `{ meta, events }`）、`installModelSelection` 在 0.1.5-rc.2 均在位，无需改动。
+- 验证：`node --check`（src+lib）+ build src→lib 一致 + **回归测试 27/27 PASS**（`tests/pending-input.test.mjs`：代际选择 6 / inbox 折叠 4 / 队列守卫 8 / 既有语义回归 6 / 模块面与 mock-apply 3）。
 
 ## 0.0.18 — 2026-09-08
 
