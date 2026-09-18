@@ -16,7 +16,7 @@
     <img src="https://img.shields.io/github/stars/shengyvself/dsh-autoresume?style=flat-square&label=stars&color=4D6BFE" alt="Stars">
   </a>
   <img src="https://img.shields.io/badge/license-Apache--2.0-0B7285?style=flat-square" alt="Apache-2.0">
-  <img src="https://img.shields.io/badge/DSH-0.1.0--rc.5+-4D6BFE?style=flat-square" alt="DSH 0.1.0-rc.5+">
+  <img src="https://img.shields.io/badge/DSH-0.1.5--rc.2+-4D6BFE?style=flat-square" alt="DSH 0.1.5-rc.2+">
   <img src="https://img.shields.io/badge/Web-4D6BFE?style=flat-square" alt="DSH Web">
 </p>
 
@@ -49,7 +49,7 @@ dsh plugin --profile web add dsh-autoresume
 
 安装后**重启 `dsh web`**。插件会在 boot 宽限窗口（默认 30 分钟，可配 `bootGraceMs`）内自动扫描并注入。
 
-**Requires DSH client packages >=0.1.0-rc.5.** 依赖 `@deepseek-ai/dsh-agent`（复用 DSH 运行时同一份，版本零漂移）。
+**Requires DSH client packages >=0.1.5-rc.2.** 依赖 `@deepseek-ai/dsh-agent`（复用 DSH 运行时同一份，版本零漂移）。
 
 也可以从 GitHub 直装：
 
@@ -73,9 +73,9 @@ dsh plugin --profile web add github:shengyvself/dsh-autoresume
 | 场景 | DSH 版本 | 插件版本 |
 |---|---|---|
 | **推荐** | **`0.1.5-rc.2+`**（当前维护版） | **`0.0.21`** |
-| 最低兼容 | `0.1.0-rc.5+` | `0.0.21` |
+| 最低兼容 | `0.1.5-rc.2+` | `0.0.21` |
 
-安装插件**不会**升级宿主 DSH。peerDependencies 声明的最低客户端包版本是 `>=0.1.0-rc.5`，实测在 `0.1.5-rc.2` 上跑通。
+安装插件**不会**升级宿主 DSH。peerDependencies 声明的最低客户端包版本是 `>=0.1.5-rc.2`，实测在 `0.1.5-rc.2` 上跑通。
 
 ## 配置
 

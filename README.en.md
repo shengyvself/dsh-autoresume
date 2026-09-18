@@ -16,7 +16,7 @@
     <img src="https://img.shields.io/github/stars/shengyvself/dsh-autoresume?style=flat-square&label=stars&color=4D6BFE" alt="Stars">
   </a>
   <img src="https://img.shields.io/badge/license-Apache--2.0-0B7285?style=flat-square" alt="Apache-2.0">
-  <img src="https://img.shields.io/badge/DSH-0.1.0--rc.5+-4D6BFE?style=flat-square" alt="DSH 0.1.0-rc.5+">
+  <img src="https://img.shields.io/badge/DSH-0.1.5--rc.2+-4D6BFE?style=flat-square" alt="DSH 0.1.5-rc.2+">
   <img src="https://img.shields.io/badge/Web-4D6BFE?style=flat-square" alt="DSH Web">
 </p>
 
@@ -49,7 +49,7 @@ dsh plugin --profile web add dsh-autoresume
 
 After installing, **restart `dsh web`**. The plugin will scan and inject within the boot grace window (default 30 minutes, configurable via `bootGraceMs`).
 
-**Requires DSH client packages >=0.1.0-rc.5.** Depends on `@deepseek-ai/dsh-agent` (reuses the DSH runtime copy, zero version drift).
+**Requires DSH client packages >=0.1.5-rc.2.** Depends on `@deepseek-ai/dsh-agent` (reuses the DSH runtime copy, zero version drift).
 
 You can also install directly from GitHub:
 
@@ -73,9 +73,9 @@ The plugin never acts on its own; it only judges and injects on web restart or l
 | Use case | DSH version | Plugin version |
 |---|---|---|
 | **Recommended** | **`0.1.5-rc.2+`** (currently maintained) | **`0.0.21`** |
-| Minimum compatible | `0.1.0-rc.5+` | `0.0.21` |
+| Minimum compatible | `0.1.5-rc.2+` | `0.0.21` |
 
-Installing the plugin **does not** upgrade the host DSH. The `peerDependencies` declare a minimum client-package version of `>=0.1.0-rc.5`; verified working on `0.1.5-rc.2`.
+Installing the plugin **does not** upgrade the host DSH. The `peerDependencies` declare a minimum client-package version of `>=0.1.5-rc.2`; verified working on `0.1.5-rc.2`.
 
 ## Configuration
 
