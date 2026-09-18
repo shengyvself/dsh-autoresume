@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 460" width="100%" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f7f7f8"/>
+      <stop offset="100%" stop-color="#eef0f8"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f5f6fb"/>
+    </linearGradient>
+    <style>
+      .h1 { font: 700 26px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #1e1e1e; }
+      .tagline { font: 400 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #555; }
+      .step-title { font: 700 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #1e1e1e; }
+      .step-desc { font: 400 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #555; }
+      .meta { font: 400 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #888; }
+      .badge-text { font: 700 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #fff; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="460" fill="url(#bg)" rx="12"/>
+
+  <!-- Header -->
+  <g transform="translate(60, 30)">
+    <text x="0" y="24" class="h1">🔁 dsh-autoresume</text>
+    <text x="0" y="46" class="tagline">重启 / 故障后自动注入「继续」，让会话接上 —— 不用你手动点</text>
+  </g>
+
+  <!-- Three-step flow -->
+  <g transform="translate(60, 90)">
+    <!-- Step 1: Web restart -->
+    <g transform="translate(0, 0)">
+      <rect width="330" height="200" fill="url(#card)" stroke="#e0e2ec" stroke-width="1" rx="10"/>
+      <circle cx="30" cy="30" r="14" fill="#4D6BFE"/>
+      <text x="30" y="34" text-anchor="middle" class="badge-text">1</text>
+      <text x="55" y="34" class="step-title">Web 重启 / 上游故障</text>
+      <text x="20" y="70" class="step-desc">
+        <tspan x="20">DSH web 重启、或上游瞬时</tspan>
+        <tspan x="20" dy="16">失败（限流、5xx、网络错</tspan>
+        <tspan x="20" dy="16">误、余额/配额错误）导致</tspan>
+        <tspan x="20" dy="16">turn 停在中间态。</tspan>
+      </text>
+      <!-- Icon: broken session -->
+      <g transform="translate(230, 120)">
+        <rect x="0" y="0" width="60" height="40" fill="#fff" stroke="#999" stroke-width="1.5" rx="4"/>
+        <line x1="20" y1="20" x2="40" y2="20" stroke="#e74c3c" stroke-width="2.5" stroke-dasharray="4,3"/>
+        <text x="30" y="60" text-anchor="middle" class="meta">会话中断</text>
+      </g>
+    </g>
+
+    <!-- Arrow 1 -->
+    <g transform="translate(340, 90)">
+      <line x1="0" y1="0" x2="20" y2="0" stroke="#4D6BFE" stroke-width="2.5"/>
+      <polygon points="20,-4 28,0 20,4" fill="#4D6BFE"/>
+    </g>
+
+    <!-- Step 2: Plugin judges -->
+    <g transform="translate(375, 0)">
+      <rect width="330" height="200" fill="url(#card)" stroke="#e0e2ec" stroke-width="1" rx="10"/>
+      <circle cx="30" cy="30" r="14" fill="#4D6BFE"/>
+      <text x="30" y="34" text-anchor="middle" class="badge-text">2</text>
+      <text x="55" y="34" class="step-title">插件判定状态</text>
+      <text x="20" y="70" class="step-desc">
+        <tspan x="20">扫描会话事件流，识别</tspan>
+        <tspan x="20" dy="16">被打断 / 网络故障 / 已完</tspan>
+        <tspan x="20" dy="16">成 / 已取消。仅对「被打</tspan>
+        <tspan x="20" dy="16">断」与「瞬时失败」动作。</tspan>
+      </text>
+      <!-- Icon: scanning -->
+      <g transform="translate(220, 115)">
+        <circle cx="20" cy="20" r="16" fill="none" stroke="#4D6BFE" stroke-width="2"/>
+        <line x1="32" y1="32" x2="42" y2="42" stroke="#4D6BFE" stroke-width="2.5" stroke-linecap="round"/>
+        <text x="20" y="60" text-anchor="middle" class="meta">判定中</text>
+      </g>
+    </g>
+
+    <!-- Arrow 2 -->
+    <g transform="translate(715, 90)">
+      <line x1="0" y1="0" x2="20" y2="0" stroke="#4D6BFE" stroke-width="2.5"/>
+      <polygon points="20,-4 28,0 20,4" fill="#4D6BFE"/>
+    </g>
+
+    <!-- Step 3: Inject continue -->
+    <g transform="translate(750, 0)">
+      <rect width="330" height="200" fill="url(#card)" stroke="#e0e2ec" stroke-width="1" rx="10"/>
+      <circle cx="30" cy="30" r="14" fill="#4D6BFE"/>
+      <text x="30" y="34" text-anchor="middle" class="badge-text">3</text>
+      <text x="55" y="34" class="step-title">注入「继续（自动）」</text>
+      <text x="20" y="70" class="step-desc">
+        <tspan x="20">以 plugin 身份发一条 notice</tspan>
+        <tspan x="20" dy="16">消息，会话自动接续上</tspan>
+        <tspan x="20" dy="16">次停下的位置。不需要</tspan>
+        <tspan x="20" dy="16">手动点、不会丢上下文。</tspan>
+      </text>
+      <!-- Icon: message with continue -->
+      <g transform="translate(210, 110)">
+        <rect x="0" y="0" width="80" height="36" fill="#4D6BFE" rx="6"/>
+        <text x="40" y="22" text-anchor="middle" class="badge-text" style="font-size:12px">继续（自动）</text>
+        <text x="40" y="56" text-anchor="middle" class="meta">会话接续</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Safety nets -->
+  <g transform="translate(60, 320)">
+    <text x="0" y="0" class="step-title" style="font-size:13px">安全网</text>
+
+    <g transform="translate(0, 15)">
+      <rect width="260" height="70" fill="#fff" stroke="#0B7285" stroke-width="1.5" rx="8"/>
+      <text x="15" y="22" class="step-title" style="font-size:12px; fill:#0B7285">🛡️ 死循环守卫</text>
+      <text x="15" y="42" class="step-desc">注入后无产出再失败</text>
+      <text x="15" y="58" class="step-desc">→ 停手交还用户</text>
+    </g>
+
+    <g transform="translate(280, 15)">
+      <rect width="260" height="70" fill="#fff" stroke="#0B7285" stroke-width="1.5" rx="8"/>
+      <text x="15" y="22" class="step-title" style="font-size:12px; fill:#0B7285">📥 队列守卫</text>
+      <text x="15" y="42" class="step-desc">inbox 有别人的挂起消息</text>
+      <text x="15" y="58" class="step-desc">→ 一律不动作</text>
+    </g>
+
+    <g transform="translate(560, 15)">
+      <rect width="260" height="70" fill="#fff" stroke="#0B7285" stroke-width="1.5" rx="8"/>
+      <text x="15" y="22" class="step-title" style="font-size:12px; fill:#0B7285">🔁 余额类防无限循环</text>
+      <text x="15" y="42" class="step-desc">402 / QUOTA 注入后再失败</text>
+      <text x="15" y="58" class="step-desc">→ 转 settled 停手</text>
+    </g>
+
+    <g transform="translate(840, 15)">
+      <rect width="260" height="70" fill="#fff" stroke="#0B7285" stroke-width="1.5" rx="8"/>
+      <text x="15" y="22" class="step-title" style="font-size:12px; fill:#0B7285">⏱️ liveWatch + 宽限窗口</text>
+      <text x="15" y="42" class="step-desc">boot 后持续轮询补 catch</text>
+      <text x="15" y="58" class="step-desc">运行期间再次失败</text>
+    </g>
+  </g>
+
+  <!-- Footer -->
+  <g transform="translate(60, 420)">
+    <text class="meta">全域扫描 · 跨平台 · 504/402/限流识别 · 连续两次自动继续 · 队列守卫</text>
+  </g>
+</svg>
