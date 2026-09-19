@@ -8,5 +8,5 @@
         initialDelayMs: 3000
         pollIntervalMs: 5000
         liveWatch: true
-        promptText: '继续（自动）'
+        promptText: '继续未完成的任务'
         maxResumeAttempts: 2

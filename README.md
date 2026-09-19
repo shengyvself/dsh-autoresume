@@ -5,7 +5,7 @@
 <h1 align="center">dsh-autoresume</h1>
 
 <p align="center">
-  <strong>Web 重启 / 上游故障后自动注入「继续」</strong> —— 会话停在中间态，插件替你接上，不用手动点。
+  <strong>Auto-injects "continue" after a Web restart or upstream failure</strong> —— when a turn is left mid-flight, the plugin picks it up for you; no manual click.
 </p>
 
 <p align="center">
@@ -21,25 +21,25 @@
 </p>
 
 <p align="center">
-  <a href="./README.en.md">English</a> · <strong>中文</strong>
+  <a href="./README.zh.md">中文</a> · <strong>English</strong>
 </p>
 
 <p align="center">
   <a href="assets/hero.svg">
-    <img src="assets/hero.svg" width="100%" alt="三步工作流：Web 重启/上游故障 → 插件判定 → 注入「继续」；下方四个安全网">
+    <img src="assets/hero.svg" width="100%" alt="Three-step flow: Web restart / upstream failure → plugin judges → inject 'continue'; four safety nets below">
   </a>
 </p>
 
-## 你拿到什么
+## What you get
 
-- 🔁 **Web 重启自动接续** —— dsh web 重启后，插件扫描全部会话，把被打断的任务自动接上；completed / settled / cancelled 一律不动。
-- 🌐 **上游瞬时故障自愈** —— 限流（429）、5xx、网络错误（ECONNRESET / timeout）、网关 504、上游 provider 故障——插件注入「继续」让会话自动重跑。
-- 💳 **余额/配额类识别** —— 402 / QUOTA / insufficient_balance / insufficient_quota 等：首次注入一次（覆盖充值后恢复），再次失败一律转 settled，防无限循环。
-- 🛡️ **死循环守卫** —— 注入后若无产出再失败，判定为持续故障，转 settled 交还用户手动处理；会话之后有产出或新用户消息则重新武装。
-- 📥 **队列守卫** —— inbox 里若有**别人**（用户/客户端）的挂起消息，插件一律不动作（既不注入也不 resume），避免把用户消息一并唤醒冲进会话。
-- ⏱️ **liveWatch 持续监听** —— boot 扫描后保持轮询，补 catch 运行期间**再次**失败（此前只有 web 重启后一次性生效）。
-- 🔢 **连续两次自动继续** —— 网络瞬时类（429 / 限流）允许注入 → 败 → 再注入 → 败 → 停，适配长限流窗口场景；余额类保持「一次即停」。
-- 🌍 **跨平台** —— Linux / macOS / Windows 行为一致（`os.homedir()` + `node:path`），路径分隔自动适配。
+- 🔁 **Auto-resume on Web restart** —— after a dsh web restart, the plugin scans all sessions and picks up the interrupted ones; completed / settled / cancelled sessions are left alone.
+- 🌐 **Transient upstream recovery** —— rate limits (429), 5xx, network errors (ECONNRESET / timeout), gateway 504, upstream provider faults —— the plugin injects "continue" and the turn retries automatically.
+- 💳 **Quota / billing recognition** —— 402 / QUOTA / insufficient_balance / insufficient_quota: inject once (covers recovery after top-up), then go settled on repeat failure to prevent infinite loops.
+- 🛡️ **Dead-loop guard** —— if the previous "continue" produced no content and the same error recurs, the plugin falls back to settled and hands control back to you.
+- 📥 **Queue guard** —— if the inbox has someone else's pending message (user / client), the plugin does nothing at all (no inject, no resume), avoiding waking the user's message into the session.
+- ⏱️ **liveWatch** —— keeps polling after boot to catch failures that recur **during** a run (previously only worked once per restart).
+- 🔢 **Two-shot auto-continue** —— transient network failures (429 / rate limits) are allowed to inject → fail → inject again → fail → stop, suited to long rate-limit windows; quota failures stay one-shot.
+- 🌍 **Cross-platform** —— Linux / macOS / Windows behave identically (`os.homedir()` + `node:path`, path separators auto-adapt).
 
 ## Install
 
@@ -47,78 +47,78 @@
 dsh plugin --profile web add dsh-autoresume
 ```
 
-安装后**重启 `dsh web`**。插件会在 boot 宽限窗口（默认 30 分钟，可配 `bootGraceMs`）内自动扫描并注入。
+After installing, **restart `dsh web`**. The plugin will scan and inject within the boot grace window (default 30 minutes, configurable via `bootGraceMs`).
 
-**Requires DSH client packages >=0.1.5-rc.2.** 依赖 `@deepseek-ai/dsh-agent`（复用 DSH 运行时同一份，版本零漂移）。
+**Requires DSH client packages >=0.1.5-rc.2.** Depends on `@deepseek-ai/dsh-agent` (reuses the DSH runtime copy, zero version drift).
 
-也可以从 GitHub 直装：
+You can also install directly from GitHub:
 
 ```sh
 dsh plugin --profile web add github:shengyvself/dsh-autoresume
 ```
 
-## 用它能干嘛
+## What you can do with it
 
-装好后，正常用即可——插件在后台自动工作。典型场景：
+After installing, just use DSH normally — the plugin works in the background. Typical scenarios:
 
-- "我刚才改了代码重启了 dsh web" —— 插件自动扫描，把被打断的开发会话接上
-- "上游模型临时限流了" —— 429 / rate_limit_exceeded 后插件注入「继续」，会话自动重跑
-- "刚才那个 504 网关超时" —— 网关 HTML 错误信封递归解包，正确判网络故障，注入「继续」
-- "余额不够，充值了" —— 首次 402 注入一次（覆盖充值后恢复），不再次失败时自动转 settled
+- "I just changed code and restarted dsh web" —— the plugin scans and picks up the interrupted dev session
+- "The upstream model hit a rate limit" —— after 429 / rate_limit_exceeded, the plugin injects "continue" and the turn retries
+- "That 504 gateway timeout earlier" —— gateway HTML error envelopes are recursively unwrapped, correctly judged as network failure, "continue" injected
+- "Out of balance, just topped up" —— first 402 injects once (covers recovery after top-up), then settles automatically on repeat failure
 
-插件不主动发起任何动作，只在 web 重启或 liveWatch 轮询时判定并注入。
+The plugin never acts on its own; it only judges and injects on web restart or liveWatch poll.
 
-## 兼容性
+## Compatibility
 
-| 场景 | DSH 版本 | 插件版本 |
+| Use case | DSH version | Plugin version |
 |---|---|---|
-| **推荐** | **`0.1.5-rc.2+`**（当前维护版） | **`0.0.21`** |
-| 最低兼容 | `0.1.5-rc.2+` | `0.0.21` |
+| **Recommended** | **`0.1.5-rc.2+`** (currently maintained) | **`0.0.21`** |
+| Minimum compatible | `0.1.5-rc.2+` | `0.0.21` |
 
-安装插件**不会**升级宿主 DSH。peerDependencies 声明的最低客户端包版本是 `>=0.1.5-rc.2`，实测在 `0.1.5-rc.2` 上跑通。
+Installing the plugin **does not** upgrade the host DSH. The `peerDependencies` declare a minimum client-package version of `>=0.1.5-rc.2`; verified working on `0.1.5-rc.2`.
 
-## 配置
+## Configuration
 
-| 键 | 默认 | 说明 |
+| Key | Default | Description |
 |---|---|---|
-| `targetSessionId` | 全域扫描 | 指定会话时只服务该会话（兼容模式） |
-| `bootGraceMs` | `30000`（30 分钟） | web 启动后允许判定的宽限窗口 |
-| `initialDelayMs` | `3000` | 首次检查延迟 |
-| `pollIntervalMs` | `5000` | 会话未就绪时的重查间隔 |
-| `promptText` | `继续（自动）` | 注入正文 |
-| `liveWatch` | `true` | boot 后保持轮询补 catch 运行期间再次失败 |
-| `maxResumeAttempts` | `2` | 网络瞬时类连续自动继续次数上限 |
-| `skipWhenInputPending` | `true` | 队列守卫：inbox 有非我方挂起消息时不注入 |
+| `targetSessionId` | full scan | When set, only serve that session (compatibility mode) |
+| `bootGraceMs` | `30000` (30 min) | Grace window after web boot for judging |
+| `initialDelayMs` | `3000` | Initial check delay |
+| `pollIntervalMs` | `5000` | Poll interval when session not ready |
+| `promptText` | `继续（自动）` | Injected message body |
+| `liveWatch` | `true` | Keep polling after boot to catch mid-run failures |
+| `maxResumeAttempts` | `2` | Max consecutive auto-continue attempts for transient failures |
+| `skipWhenInputPending` | `true` | Queue guard: skip injection if inbox has someone else's pending message |
 
 ## Security
 
-- 只读会话事件流（`ctx.sessionPersistence`），**不写**用户文件。
-- 注入的消息以 plugin 身份（`source.kind=plugin, form=notice`）发送，不伪装用户消息。
-- 不联网。除调用 DSH 内部 `ctx.agents.get()` / `agent.followup()` 之外，无对外网络请求。
-- 死循环守卫 + 余额类防无限循环 + 队列守卫三重保护，避免误伤。
+- Reads session event streams only (`ctx.sessionPersistence`); **never writes** user files.
+- Injected messages are sent as plugin identity (`source.kind=plugin, form=notice`), never disguised as user messages.
+- No network calls. Except for calling DSH's internal `ctx.agents.get()` / `agent.followup()`, there are no outbound requests.
+- Triple protection: dead-loop guard + quota infinite-loop guard + queue guard, to avoid false positives.
 
-## 依赖说明
+## Dependency notes
 
-`@deepseek-ai/dsh-agent` 声明在 `peerDependencies`（由宿主 DSH 提供）。
+`@deepseek-ai/dsh-agent` is declared in `peerDependencies` (provided by the host DSH).
 
-⚠️ 已知问题：`package.json` 的 `dependencies` 里也列了 `@deepseek-ai/dsh-agent: 0.1.1-rc.2`——这违反 persona §三.1.3 铁律（官方 `@deepseek-ai/*` 包只进 peerDependencies）。当前安装方式是手动 symlink 复用 DSH 运行时同一份，避免版本漂移。下一版会清理。
+⚠️ Known issue: `package.json`'s `dependencies` also lists `@deepseek-ai/dsh-agent: 0.1.1-rc.2` —— this violates the persona §三.1.3 rule (official `@deepseek-ai/*` packages go only to peerDependencies). The current install path is a manual symlink reusing the DSH runtime copy, avoiding version drift. Will be cleaned up in the next release.
 
-## 版本历史
+## Version history
 
-完整 changelog 见 [`CHANGELOG.md`](./CHANGELOG.md)。关键里程碑：
+Full changelog: [`CHANGELOG.md`](./CHANGELOG.md). Key milestones:
 
-- **v0.0.21**（2026-09-13）：自动继续恢复链路修复（0.1.5 `inspect()` 移除 → 改 `open/read/close`；`AgentSetup` 回调签名变更）
-- **v0.0.19**（2026-09-13）：队列守卫 + DSH 0.1.5 会话代际适配
-- **v0.0.18**（2026-09-08）：连续两次自动继续（商汤日日新裁决）
-- **v0.0.17**（2026-09-02）：tpm/rpm 限流识别
-- **v0.0.16**（2026-09-01）：启动崩溃修复（防御 `getAgent()`）
-- **v0.0.15**（2026-09-01）：402/400/中文瞬时可继续 + 余额类防无限循环
-- **v0.0.13**（2026-08-31）：OpenRouter 上游 provider 故障识别
-- **v0.0.12**（2026-08-31）：504/网关超时递归信封解包
-- **v0.0.9**（2026-08-24）：liveWatch + 死循环守卫
-- **v0.0.8**（2026-08-24）：网络故障停止识别
+- **v0.0.21** (2026-09-13): Auto-resume chain fix (0.1.5 `inspect()` removed → `open/read/close`; `AgentSetup` callback signature change)
+- **v0.0.19** (2026-09-13): Queue guard + DSH 0.1.5 session generation adaptation
+- **v0.0.18** (2026-09-08): Two-shot auto-continue (SenseNova decision)
+- **v0.0.17** (2026-09-02): tpm/rpm rate-limit recognition
+- **v0.0.16** (2026-09-01): Startup crash fix (defensive `getAgent()`)
+- **v0.0.15** (2026-09-01): 402/400/Chinese transient recovery + quota infinite-loop guard
+- **v0.0.13** (2026-08-31): OpenRouter upstream provider fault recognition
+- **v0.0.12** (2026-08-31): 504/gateway timeout recursive envelope unwrap
+- **v0.0.9** (2026-08-24): liveWatch + dead-loop guard
+- **v0.0.8** (2026-08-24): Network-failure stop recognition
 
-## 构建与开发
+## Build & development
 
 ```bash
 npm run build

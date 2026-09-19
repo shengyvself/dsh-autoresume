@@ -15,7 +15,7 @@ import {
 let pass = 0; const fails = [];
 function t(name, fn) { try { fn(); pass += 1; } catch (e) { fails.push(name + ' :: ' + e.message); } }
 
-const CONTINUE = '继续（自动）';
+const CONTINUE = '继续未完成的任务';
 const ours = () => buildContinueMessage(CONTINUE);
 const userMsg = (text) => ({ id: 'u-' + text, role: 'user', content: [{ type: 'text', text }] });
 function ev(type, seq, data) { return { type, seq, data }; }
