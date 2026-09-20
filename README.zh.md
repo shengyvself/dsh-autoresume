@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/logo.svg" width="96" alt="dsh-autoresume logo">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <img src="assets/banner.svg" width="720" alt="dsh-autoresume">
+  </picture>
 </p>
 
 <h1 align="center">dsh-autoresume</h1>
@@ -25,8 +28,8 @@
 </p>
 
 <p align="center">
-  <a href="assets/hero.svg">
-    <img src="assets/hero.svg" width="100%" alt="三步工作流：Web 重启/上游故障 → 插件判定 → 注入「继续」；下方四个安全网">
+  <a href="assets/workflow.svg">
+    <img src="assets/workflow.svg" width="100%" alt="决策流程：触发源 → 分类 → 守卫 → 注入 → 结果">
   </a>
 </p>
 

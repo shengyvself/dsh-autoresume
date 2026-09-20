@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/logo.svg" width="96" alt="dsh-autoresume logo">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <img src="assets/banner.svg" width="720" alt="dsh-autoresume">
+  </picture>
 </p>
 
 <h1 align="center">dsh-autoresume</h1>
@@ -25,8 +28,8 @@
 </p>
 
 <p align="center">
-  <a href="assets/hero.svg">
-    <img src="assets/hero.svg" width="100%" alt="Three-step flow: Web restart / upstream failure → plugin judges → inject 'continue'; four safety nets below">
+  <a href="assets/workflow.svg">
+    <img src="assets/workflow.svg" width="100%" alt="Decision flow: triggers → classify → guards → inject → result">
   </a>
 </p>
 
