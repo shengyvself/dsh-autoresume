@@ -1,6 +1,6 @@
 {
   "name": "dsh-autoresume",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Auto-resumes dsh sessions whose turn was left mid-flight by a web restart or a transient upstream failure (rate limits, 5xx, network faults, quota/billing errors) by injecting a 'continue' message, with a dead-loop guard that hands control back if the retry produces nothing.",
   "keywords": [
     "dsh",

@@ -2,6 +2,21 @@
 
 本文件记录 dsh-autoresume 的发布版本变更。版本号与 package.json 同步。
 
+## 0.1.5 — 2026-09-21
+
+- **缺陷 B 修复：用户手动停止不得触发自动继续**（用户明示「绝对的 bug」）。
+  - **根因**：`turn/end` 的 `kind: "aborted"` 是驱动**主动收尾**（`cancel` 的 `finally` 写出 turn/end，step/end 与 tool/result 全部闭合），与「环境杀死进程」（turn/end 缺失、open turn）本质不同。旧分类链见 `openStep` / 无结果 `tool/call` 一律把 `reasons` 填非空 → 判 `interrupted` → 注入「继续」，等于**推翻用户指令**。全量取证：133 个 `aborted/user` 事件**全数无悬挂边界**（0 悬挂 tool/call、0 open step）——旧代码靠「边界恰好闭合」这一**巧合**才未误注入，保证是脆弱的。
+  - **修复（两处）**：① 悬挂边界（`openStep` / `pendingTool`）只在**轮次仍打开**（`openTurn`）时计入可继续判据——闭合轮次一律落到按 `turn/end` 原因的判定；② 新增显式 `aborted` 分支判 `settled`（reason 标出动因 `user` / `disposed`），且位置在 `reasons` 判定**之后**：上一个 aborted 轮次之后若又起了新轮次并被环境杀死（open turn），仍判 `interrupted` 继续，不误伤真实中断。
+  - **顺带消除两处潜在误注入**：闭合轮次 + 悬挂 `tool/call` 在旧代码判 `interrupted` 并注入；新代码按 `turn/end` 原因分流——`error(网络)` → `network-stopped`（仍可继续，语义不变），`completed` → `completed`（不注入）。
+
+- **缺陷 A 修复：工具调用被中断于「记录为开始」之前时自动继续完全不生效**（用户实报）。
+  - **根因**：宿主在这种中断下补写 `ToolNotStartedError` 的 `tool/result`（`"The tool call was interrupted before the Harness recorded it as started. Retry it if it is still needed."`），明确写着要重试；而上一条 `assistant/message` 是**未执行**的工具请求，轮次并未结束。旧代码见 `lastType === "assistant/message"` **一律判 `completed`（终态）**，不设任何例外 → 该形态永远不注入。
+  - **修复**：新增 `messageHasToolCall(message)`——`lastType === "assistant/message"` 且**不含** tool-call 块时才判 `completed`（终结回复，旧行为保留）；含 tool-call 块则落到 `open turn` 判定接手续跑。
+
+- **验证**：① `node --check`（src+lib 均通过）；② build src→lib 一致（64715 bytes）；③ 新增 `tests/manual-stop.test.mjs` **12/12 PASS**（缺陷 A 4 例含对照 / 缺陷 B 5 例含对照 / 分流与守卫回归 3 例）；④ 全量 **26/26 PASS**（14 既有 + 12 新增，0 fail）；⑤ **负向对照**：把三处行为改动回退到旧逻辑后同一套测试 **4 PASS / 8 FAIL**，8 个失败项正是缺陷 A/B 的回归用例；⑥ **全量回放**（147 个真实会话 / 110,439 事件，新旧分类并跑）：状态分布完全一致（`completed=100`、`settled=43`、`interrupted=2`、`pending-input=2`，可续跑 2 = 2），仅 12 个会话的 reason 由含糊的 `last turn/end reason = aborted; no mid-state` 变为明确的 `turn ended by explicit abort (user), user stop is final`——**零行为回归**。
+
+- 配置无变更（未新增配置项）。
+
 ## 0.0.21 — 2026-09-13
 
 - **关键修复（二）：0.1.5 `AgentSetup` 回调签名变更 → resume 事务失败，自动继续仍不注入**。
